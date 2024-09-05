@@ -9,8 +9,7 @@
 #' @param states character The states to include as a vector of two-character
 #'   state abbreviations
 #'
-#' @return AirNow data for the specified dates and locations in the
-#'   \emph{ws_monitor} format.
+#' @return AirNow data for the specified dates and locations as SpatialPointsDataFrame
 #' @export
 #'
 #' @examples dt1 <- as.Date("2018-11-01")
@@ -21,31 +20,45 @@ get_airnow_daterange <- function(start, end, states) {
   end <- end + 1
 
   if (Sys.Date() - end < 45) {
-    raw1 <- PWFSLSmoke::airnow_loadDaily() %>%
-      PWFSLSmoke::monitor_subset(tlim = c(lubridate::force_tz(start, "America/Los_Angeles"),
-                                          lubridate::force_tz(end, "America/Los_Angeles")),
-                                 stateCodes = states)
+    raw1 <- airnow_loadDaily() |>
+      subset_monitors(start, end, states) |>
+      recast_monitors()
+
   }
   if (Sys.Date() - start > 45) {
-    raw2 <- PWFSLSmoke::airnow_loadAnnual(lubridate::year(start)) %>%
-      PWFSLSmoke::monitor_subset(tlim = c(lubridate::force_tz(start, "America/Los_Angeles"),
-                                          lubridate::force_tz(end, "America/Los_Angeles")),
-                                 stateCodes = states)
+    raw2 <- airnow_loadAnnual(lubridate::year(start)) |>
+      subset_monitors(start, end, states) |>
+      recast_monitors()
   }
 
   if (exists("raw1")) {
     if (exists("raw2")) {
-      return(PWFSLSmoke::monitor_combine(list(raw1, raw2)))
+      # Need to merge the data sets. There may be overlap to remove.
+      last_date_raw2 <- max(raw2$Day)
+      raw1 <- raw1[raw1$Day > last_date_raw2,]
+      return(rbind(raw1, raw2))
     } else {
       return(raw1)
     }
   } else {
     return(raw2)
   }
+  
+}
 
+# Limit monitor data downloaded from AirFire to a specific date range and state list
+subset_monitors <- function(ws, start, end, states) {
+  ws$meta <- ws$meta |>
+    dplyr::filter(stateCode %in% states)
+  ws$data <- ws$data |>
+    dplyr::filter(datetime >= lubridate::force_tz(start, "America/Los_Angeles"),
+                  datetime <= lubridate::force_tz(end, "America/Los_Angeles"))
+  return(ws)
 }
 
 #' get_airsis_daterange
+#' 
+#' NOTE!! As of 2024-09-05, the most recent airsis data in the AirFire archive was 2022-09-19
 #'
 #' For the specified date range and US states, downloads AIRSIS data.
 #'
@@ -55,8 +68,7 @@ get_airnow_daterange <- function(start, end, states) {
 #' @param states character The states to include as a vector of two-character
 #'   state abbreviations
 #'
-#' @return AIRSIS data for the specified dates and locations in the
-#'   \emph{ws_monitor} format.
+#' @return AIRSIS data for the specified dates and locations as A SpatialPointsDataFrame
 #' @export
 #'
 #' @examples dt1 <- as.Date("2018-11-01")
@@ -67,21 +79,23 @@ get_airsis_daterange <- function(start, end, states) {
   end <- end + 1
 
   if (Sys.Date() - end < 45) {
-    raw1 <- PWFSLSmoke::airsis_loadDaily() %>%
-      PWFSLSmoke::monitor_subset(tlim = c(lubridate::force_tz(start, "America/Los_Angeles"),
-                                          lubridate::force_tz(end, "America/Los_Angeles")),
-                                 stateCodes = states)
+    raw1 <- airsis_loadDaily() |>
+      subset_monitors(start, end, states) |>
+      recast_monitors()
   }
   if (Sys.Date() - start > 45) {
-    raw2 <- PWFSLSmoke::airsis_loadAnnual(lubridate::year(start)) %>%
-      PWFSLSmoke::monitor_subset(tlim = c(lubridate::force_tz(start, "America/Los_Angeles"),
-                                          lubridate::force_tz(end, "America/Los_Angeles")),
-                                 stateCodes = states)
+    raw2 <- airsis_loadAnnual(lubridate::year(start)) |>
+      subset_monitors(start, end, states) |>
+      recast_monitors()
   }
 
   if (exists("raw1")) {
     if (exists("raw2")) {
-      return(PWFSLSmoke::monitor_combine(list(raw1, raw2)))
+      # Need to merge the data sets. There may be overlap to remove.
+      last_date_raw2 <- max(raw2$Day)
+      raw1 <- raw1[raw1$Day > last_date_raw2,]
+      return(rbind(raw1, raw2))
+      
     } else {
       return(raw1)
     }
@@ -127,8 +141,9 @@ recast_monitors <- function(mon) {
     select(monitorID, longitude, latitude) %>%
     distinct()
 
+  # edited to inner_join from left_join when joining sites to df
   df <- df %>%
-    left_join(sites, by = "monitorID")
+    inner_join(sites, by = "monitorID")
 
   # make spatial and change to planar coordinates
   sp::coordinates(df) <- ~longitude+latitude
@@ -168,46 +183,6 @@ create_airnow_variograms <- function(df, cutoff = NULL) {
 
   dates <- unique(df$Day)
   purrr:::map(dates, daily_variogram, cutoff)
-
-}
-
-### Deprecated??
-# Take the output from create_airnow_variograms and make a plot of modeled
-# lines, data, or both
-plot_variogram_lines <- function(vgm_list, maxdist = 4e5) {
-
-  require(ggplot2)
-
-  # Take apart the variogram list
-  var_lines <- function(v, maxdist) {
-    mod <- v$m
-    vl <- gstat::variogramLine(mod, maxdist)
-  }
-
-  vlines <- purrr::map_dfr(vgm_list, var_lines, maxdist, .id = "id")
-  dfs <- purrr::map_dfr(vgm_list, ~.x$d, .id = "id")
-  days <- dfs %>%
-    select(id, Date) %>%
-    distinct()
-browser()
-  vlines <- inner_join(vlines, days, by = "id")
-
-  # Plot of the modeled variogram lines
-  ggplot(vlines, aes(x = dist, y = gamma, group = id, color = id)) +
-    geom_line() +
-    scale_color_viridis_d()
-
-  # plot of the distribution of variogram model parameters
-  mods <- purrr::map_dfr(vgm_list, ~.x$m, .id = "id")
-  nuggets <- filter(mods, model == "Nug") %>%
-    select(id, nugget=psill)
-  sill_range <- filter(mods, model != "Nug") %>%
-    select(id, psill, range)
-  models <- inner_join(nuggets, sill_range, by = "id")
-  models_tall <- models %>%
-    tidyr::pivot_longer(cols = nugget:range, names_to = "param", values_to = "value")
-  ggplot(models_tall, aes(x = value, y = 1)) + geom_boxplot() +
-    facet_wrap(~param, scales = "free_x", ncol = 1)
 
 }
 
