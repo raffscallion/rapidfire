@@ -55,13 +55,12 @@ openaq_find_sites <- function(outline_sf, search_radius = 20000,
     coord_string <- paste(round(coord[2], 5), round(coord[1], 5), sep = ",")
     query_string <- list(
       limit = "100000",
-      page = "1",
       offset = "0",
       sort = "desc",
       parameter_id = "2",
       coordinates = coord_string,
       radius = as.character(radius),
-      country_id = country_id,
+      country = country_id,
       order_by = "location",
       sensorType = "low-cost sensor",
       dumpRaw = "false"
