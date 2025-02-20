@@ -16,8 +16,7 @@ as \code{start}.}
 state abbreviations}
 }
 \value{
-AirNow data for the specified dates and locations in the
-  \emph{ws_monitor} format.
+AirNow data for the specified dates and locations as SpatialPointsDataFrame
 }
 \description{
 For the specified date range and US states, downloads AirNow data.

@@ -16,10 +16,12 @@ as \code{start}.}
 state abbreviations}
 }
 \value{
-AIRSIS data for the specified dates and locations in the
-  \emph{ws_monitor} format.
+AIRSIS data for the specified dates and locations as A SpatialPointsDataFrame
 }
 \description{
+NOTE!! As of 2024-09-05, the most recent airsis data in the AirFire archive was 2022-09-19
+}
+\details{
 For the specified date range and US states, downloads AIRSIS data.
 }
 \examples{

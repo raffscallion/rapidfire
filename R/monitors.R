@@ -1,47 +1,71 @@
-
-#' get_airnow_daterange
+#' get_monitor_daterange
 #'
-#' For the specified date range and US states, downloads AirNow data.
+#' For the specified date range and US states, downloads AirNow, AirSIS, or WRCC data from
+#' the AirFire archive.
 #'
-#' @param start Date The earliest date to search
-#' @param end Date The latest date to search. Must be in the same calendar year
-#'   as \code{start}.
-#' @param states character The states to include as a vector of two-character
-#'   state abbreviations
-#'
-#' @return AirNow data for the specified dates and locations as SpatialPointsDataFrame
+#' @param start Date The earliest date to search 
+#' @param end Date The latest date to search. Must be in the same calendar year as \code{start}. 
+#' @param states character The states to include as a vector of two-character state abbreviations
+#' @param mon_source character The monitor source type among "airnow", "airsis", or "wrcc"
+#' 
+#' @return monitoring data for the specified dates and locations as SpatialPointsDataFrame
 #' @export
 #'
-#' @examples dt1 <- as.Date("2018-11-01")
-#'   dt2 <- as.Date("2018-11-30")
-#'   an_ws <- get_airnow_daterange(dt1, dt2, c("CA", "NV"))
-get_airnow_daterange <- function(start, end, states) {
+#' @examples dt1 <- as.Date("2018-11-01") dt2 <- as.Date("2018-11-30") 
+#' an_ws <- get_monitor_daterange(dt1, dt2, c("CA", "NV"), "airnow")
+get_monitor_daterange <- function(start, end, states, mon_source = "airnow") {
 
   end <- end + 1
 
   if (Sys.Date() - end < 45) {
-    raw1 <- airnow_loadDaily() |>
-      subset_monitors(start, end, states) |>
-      recast_monitors()
-
-  }
-  if (Sys.Date() - start > 45) {
-    raw2 <- airnow_loadAnnual(lubridate::year(start)) |>
-      subset_monitors(start, end, states) |>
-      recast_monitors()
-  }
-
-  if (exists("raw1")) {
-    if (exists("raw2")) {
-      # Need to merge the data sets. There may be overlap to remove.
-      last_date_raw2 <- max(raw2$Day)
-      raw1 <- raw1[raw1$Day > last_date_raw2,]
-      return(rbind(raw1, raw2))
+    if (mon_source == "airnow") {
+      raw1 <- AirMonitor::airnow_loadDaily()
+    } else if (mon_source == "airsis") {
+      raw1 <- AirMonitor::airsis_loadDaily()
+    } else if (mon_source == "wrcc") {
+      raw1 <- AirMonitor::wrcc_loadDaily()
     } else {
-      return(raw1)
+      stop("invalid mon_source specified")
     }
+    sub1 <- subset_monitors(raw1, start, end, states)
+    # deal with no data in this time period
+    if (nrow(sub1$meta) == 0 || nrow(sub1$data) == 0) {
+      warning("No data in range for ", mon_source)
+    } else {
+      df1 <- recast_monitors(sub1)
+    }
+  }
+
+  if (Sys.Date() - start > 45) {
+    if (mon_source == "airnow") {
+      raw2 <- AirMonitor::airnow_loadAnnual(lubridate::year(start))
+    } else if (mon_source == "airsis") {
+      raw2 <- AirMonitor::airsis_loadAnnual(lubridate::year(start))
+    } else if (mon_source == "wrcc") {
+      raw2 <- AirMonitor::wrcc_loadAnnual(lubridate::year(start))
+    }
+    sub2 <- subset_monitors(raw2, start, end, states)
+    # deal with no data in this time period
+    if (nrow(sub2$meta) == 0 || nrow(sub2$data) == 0) {
+      warning("No data in range for ", mon_source)
+    } else {
+      df2 <- recast_monitors(sub2)
+    }
+  }
+
+  if (exists("df1")) {
+    if (exists("df2")) {
+      # Need to merge the data sets. There may be overlap to remove.
+      last_date_df2 <- max(df2$Day)
+      df1 <- df1[df1$Day > last_date_df2,]
+      return(rbind(df1, df2))
+    } else {
+      return(df1)
+    }
+  } else if (exists("df2")) {
+    return(df2)
   } else {
-    return(raw2)
+    return(NULL)
   }
   
 }
@@ -54,55 +78,6 @@ subset_monitors <- function(ws, start, end, states) {
     dplyr::filter(datetime >= lubridate::force_tz(start, "America/Los_Angeles"),
                   datetime <= lubridate::force_tz(end, "America/Los_Angeles"))
   return(ws)
-}
-
-#' get_airsis_daterange
-#' 
-#' NOTE!! As of 2024-09-05, the most recent airsis data in the AirFire archive was 2022-09-19
-#'
-#' For the specified date range and US states, downloads AIRSIS data.
-#'
-#' @param start Date The earliest date to search
-#' @param end Date The latest date to search. Must be in the same calendar year
-#'   as \code{start}.
-#' @param states character The states to include as a vector of two-character
-#'   state abbreviations
-#'
-#' @return AIRSIS data for the specified dates and locations as A SpatialPointsDataFrame
-#' @export
-#'
-#' @examples dt1 <- as.Date("2018-11-01")
-#'   dt2 <- as.Date("2018-11-30")
-#'   an_ws <- get_airsis_daterange(dt1, dt2, c("CA", "NV"))
-get_airsis_daterange <- function(start, end, states) {
-
-  end <- end + 1
-
-  if (Sys.Date() - end < 45) {
-    raw1 <- airsis_loadDaily() |>
-      subset_monitors(start, end, states) |>
-      recast_monitors()
-  }
-  if (Sys.Date() - start > 45) {
-    raw2 <- airsis_loadAnnual(lubridate::year(start)) |>
-      subset_monitors(start, end, states) |>
-      recast_monitors()
-  }
-
-  if (exists("raw1")) {
-    if (exists("raw2")) {
-      # Need to merge the data sets. There may be overlap to remove.
-      last_date_raw2 <- max(raw2$Day)
-      raw1 <- raw1[raw1$Day > last_date_raw2,]
-      return(rbind(raw1, raw2))
-      
-    } else {
-      return(raw1)
-    }
-  } else {
-    return(raw2)
-  }
-
 }
 
 #' recast_monitors
@@ -124,7 +99,8 @@ recast_monitors <- function(mon) {
   df <- mon$data %>%
     tidyr::gather("monitorID", "PM25", -datetime)
   meta <- mon$meta %>%
-    select(monitorID, longitude, latitude, stateCode, monitorType)
+    select(monitorID=deviceDeploymentID, longitude, latitude, stateCode, deviceType)
+
   df <- left_join(df, meta, by = "monitorID") %>%
     filter(!is.na(PM25)) %>%
     mutate(LocalTime = lubridate::with_tz(datetime, "America/Los_Angeles"),
@@ -137,7 +113,7 @@ recast_monitors <- function(mon) {
            PM25 > 0) %>%
     mutate(PM25_log = log(PM25))
 
-  sites <- mon$meta %>%
+  sites <- meta %>%
     select(monitorID, longitude, latitude) %>%
     distinct()
 
@@ -147,8 +123,8 @@ recast_monitors <- function(mon) {
 
   # make spatial and change to planar coordinates
   sp::coordinates(df) <- ~longitude+latitude
-  sp::proj4string(df) <- sp::CRS("+init=epsg:4326")
-  df <- sp::spTransform(df, sp::CRS("+init=epsg:3395"))
+  sp::proj4string(df) <- sp::CRS("EPSG:4326")
+  df <- sp::spTransform(df, sp::CRS("EPSG:3395"))
   return(df)
 
 }

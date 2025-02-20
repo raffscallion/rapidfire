@@ -97,10 +97,11 @@ pa_sensor_history <- function(sensor_index, start_date, end_date, key) {
   start_date <- as.Date(start_date)
   end_date <- as.Date(end_date) + 1
 
-  # Current API limits to 14 day windows for hourly averages, so break into
+  # Current API limits to 180 day windows for hourly averages, so break into
   # chunks if longer than that.
-  start_dates <- seq.Date(from = start_date, to = end_date, by = "14 days")
-  end_dates <- start_dates + 14
+  start_dates <- seq.Date(from = start_date, to = end_date, by = "180 days")
+  end_dates <- start_dates + 180
+  end_dates[length(end_dates)] <- end_date
 
   pa_sensor_week <- function(start, end) {
     query_string <- list(
@@ -543,7 +544,7 @@ krige_purpleair_sitedates <- function(pa_data, outlocs, vgms) {
     outlocs <- outlocs[outlocs$Day == date,]
     print(date)
     ok <- gstat::krige(Purple_log ~ 1, locations = locs, newdata = outlocs,
-                       model = mod)
+                       model = mod, nmax = 100) #large maxdist was still slow - trying nmax
 
     # Attach to measured values
     output <- outlocs@data
@@ -554,5 +555,3 @@ krige_purpleair_sitedates <- function(pa_data, outlocs, vgms) {
   }
   all <- purrr::map_dfr(dates, process_one_ok, pa_data, outlocs, vgms, rows)
 }
-
-

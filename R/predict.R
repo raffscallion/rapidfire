@@ -23,8 +23,7 @@
 #'   \url{https://doi.org/10.1080/10962247.2021.1891994}{O'Neill et al., 2021}).
 #'   If "nominal", instead use a nominal placeholder value for BlueSky PM2.5 of
 #'   0.1, which will have a near neutral impact on predictions.
-#' @param pa_data Optional PurpleAir data in pas-like format. If not provided, a
-#'   download will be attempted.
+#' @param pa_data PurpleAir data in pas-like format.
 #'
 #' @return A dataframe with all model input values and the resulting predictions
 #'   for the locations and dates specified in \emph{locations}
@@ -36,13 +35,12 @@ predict_locs <- function(dt1, dt2, states = "CA", model, locations,
                          pa_cutoff = 100000, bluesky_special = NULL,
                          pa_data = NULL) {
 
-  # Get and prep AirNow and AirSIS data
-  print("AirNow and AirSIS data...")
-  an_ws <- get_airnow_daterange(dt1, dt2, states) %>%
-    recast_monitors()
-  as_ws <- get_airsis_daterange(dt1, dt2, states) %>%
-    recast_monitors()
-  mon <- rbind(an_ws, as_ws)
+  # Get and prep AirNow and mobile monitor data
+  print("AirNow, AirSIS, and WRCC data...")
+  an_ws <- get_monitor_daterange(dt1, dt2, states, "airnow")
+  as_ws <- get_monitor_daterange(dt1, dt2, states, "airsis")
+  wr_ws <- get_monitor_daterange(dt1, dt2, states, "wrcc")
+  mon <- do.call(rbind, c(an_ws, as_ws, wr_ws))
 
   an_vg <- create_airnow_variograms(mon)
   ank <- krige_airnow_sitedates(mon, locations, an_vg)
@@ -78,13 +76,10 @@ predict_locs <- function(dt1, dt2, states = "CA", model, locations,
   # Get and prep PurpleAir data For dates prior to April 5, 2019, the data must
   # be acquired by create_purpleair_archive before running this script
   print("PurpleAir data...")
-  if (is.null(pa_data)) {
-    pa_data <- get_purpleair_daterange(dt1, dt2, states)
-  } else {
-    pa_data <- readRDS(pa_data) %>%
-      filter(Date >= dt1,
-             Date <=dt2)
-  }
+  pa_data <- readRDS(pa_data) %>%
+    filter(Date >= dt1,
+          Date <=dt2)
+
   pas <- purpleair_spatial(pa_data)
   pa_clean <- purpleair_clean_spatial_outliers(pas)
   pa_vg <- create_purpleair_variograms(pa_clean, cutoff = pa_cutoff)

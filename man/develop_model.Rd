@@ -11,7 +11,8 @@ develop_model(
   pa_cutoff = 1e+05,
   seed = 1977,
   bluesky_special = NULL,
-  pa_data = NULL
+  pa_data = NULL,
+  bs_path = "./data/bluesky/archive/"
 )
 }
 \arguments{

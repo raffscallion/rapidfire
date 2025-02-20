@@ -4,7 +4,7 @@ Title: relatively accurate particulate information derived from inputs retrieved
 Version: 1.1.0
 Author: Sean Raffuse
 Maintainer: Sean Raffuse <sraffuse@ucdavis.edu>
-Description: Tools for acquiring input data, developing regression models, and using those models to predict surface level PM2.5 concentrations, especially during wildfire smoke episodes.
+Description: Tools for acquiring input data, developing regression models, and using those models to estimate surface level PM2.5 concentrations, especially during wildfire smoke episodes.
 License: GPL (>= 3)
 Encoding: UTF-8
 LazyData: true

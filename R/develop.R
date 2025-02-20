@@ -36,13 +36,12 @@ develop_model <- function(dt1, dt2, states, pa_cutoff = 100000, seed = 1977,
                           bluesky_special = NULL, pa_data = NULL,
                           bs_path = "./data/bluesky/archive/") {
 
-  # Get and prep AirNow and AirSIS data
-  print("AirNow and AirSIS data...")
-  an_ws <- get_airnow_daterange(dt1, dt2, states) %>%
-    recast_monitors()
-  as_ws <- get_airsis_daterange(dt1, dt2, states) %>%
-    recast_monitors()
-  mon <- rbind(an_ws, as_ws)
+  # Get and prep AirNow and mobile monitor data
+  print("AirNow, AirSIS, and WRCC data...")
+  an_ws <- get_monitor_daterange(dt1, dt2, states, "airnow")
+  as_ws <- get_monitor_daterange(dt1, dt2, states, "airsis")
+  wr_ws <- get_monitor_daterange(dt1, dt2, states, "wrcc")
+  mon <- do.call(rbind, c(an_ws, as_ws, wr_ws))
 
   an_vg <- create_airnow_variograms(mon)
   # trying a larger fraction of test data to make a more complete RF model

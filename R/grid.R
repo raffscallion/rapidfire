@@ -46,7 +46,8 @@ make_state_grid <- function(outline, cellsize) {
                                      proj4string = sp::CRS("+init=epsg:3395"), data = df)
 
   # filter only to grid cells that fall within state (at least partially)
-  g <- rgeos::gIntersection(grid, outline, byid = c(TRUE, FALSE))
+  stop("This function is currently inactive while rgeos is replaced")
+  #g <- rgeos::gIntersection(grid, outline, byid = c(TRUE, FALSE))
 
   # Convert to spatial pixels
   sp::gridded(g) <- TRUE

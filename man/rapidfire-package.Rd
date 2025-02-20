@@ -6,6 +6,6 @@
 \alias{rapidfire-package}
 \title{rapidfire: relatively accurate particulate information derived from inputs retrieved easily}
 \description{
-Tools for acquiring input data, developing regression models, and using those models to predict surface level PM2.5 concentrations, especially during wildfire smoke episodes.
+Tools for acquiring input data, developing regression models, and using those models to estimate surface level PM2.5 concentrations, especially during wildfire smoke episodes.
 }
 \keyword{internal}

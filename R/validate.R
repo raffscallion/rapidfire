@@ -25,14 +25,14 @@ validate <- function(dt1, dt2, states = "CA", k = 10, pa_data = NULL,
   # Extract the model
   mod <- readRDS(model)
   mod <- mod$model$finalModel
+  
+  # Get and prep AirNow and mobile monitor data
+  print("AirNow, AirSIS, and WRCC data...")
+  an_ws <- get_monitor_daterange(dt1, dt2, states, "airnow")
+  as_ws <- get_monitor_daterange(dt1, dt2, states, "airsis")
+  wr_ws <- get_monitor_daterange(dt1, dt2, states, "wrcc")
+  mon <- do.call(rbind, c(an_ws, as_ws, wr_ws))
 
-  # Get and prep AirNow and AirSIS data
-  print("AirNow and AirSIS data...")
-  an_ws <- get_airnow_daterange(dt1, dt2, states) %>%
-    recast_monitors()
-  as_ws <- get_airsis_daterange(dt1, dt2, states) %>%
-    recast_monitors()
-  mon <- rbind(an_ws, as_ws)
   an_vg <- create_airnow_variograms(mon)
 
   # Get and prep all of the necessary data once
