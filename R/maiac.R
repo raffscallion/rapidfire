@@ -31,7 +31,7 @@ modis_tile_pick <- function(llat, ulat, llon, rlon) {
 
 #' maiac_download
 #'
-#' Download MAIAC collection 6 data from the USGS archive
+#' Download MAIAC collection 6.1 data from the USGS archive
 #'
 #' @param dt Date to retrieve
 #' @param user Username NASA Earthdata
@@ -47,7 +47,7 @@ modis_tile_pick <- function(llat, ulat, llon, rlon) {
 maiac_download <- function(dt, user, password, outpath = "./data/MAIAC/",
                            tiles_needed = c("h08v04", "h08v05", "h09v04")) {
 
-  base_url <- "https://e4ftl01.cr.usgs.gov/MOTA/MCD19A2.006/"
+  base_url <- "https://e4ftl01.cr.usgs.gov/MOTA/MCD19A2.061/"
 
   # Date
   dt_str <- strftime(dt, format = "%Y.%m.%d")
