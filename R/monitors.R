@@ -96,6 +96,7 @@ subset_monitors <- function(ws, start, end, states) {
 #'   an_ws <- get_airsis_daterange(dt1, dt2, c("CA", "NV")) %>%
 #'     recast_monitors()
 recast_monitors <- function(mon) {
+
   df <- mon$data %>%
     tidyr::gather("monitorID", "PM25", -datetime)
   meta <- mon$meta %>%
@@ -120,6 +121,11 @@ recast_monitors <- function(mon) {
   # edited to inner_join from left_join when joining sites to df
   df <- df %>%
     inner_join(sites, by = "monitorID")
+  
+  if (nrow(df) == 0) {
+    "No monitor data for this range..."
+    return(NULL)
+  }
 
   # make spatial and change to planar coordinates
   sp::coordinates(df) <- ~longitude+latitude

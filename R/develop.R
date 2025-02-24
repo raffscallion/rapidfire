@@ -176,3 +176,116 @@ develop_model <- function(dt1, dt2, states, pa_cutoff = 100000, seed = 1977,
 
 }
 
+# New version substituting HRRR-smoke for both NARR and BlueSky
+develop_model_h <- function(dt1, dt2, states, pa_cutoff = 100000, seed = 1977,
+                          pa_data = NULL, maiac_path = "./data/MAIAC/") {
+  
+  # Get and prep AirNow and mobile monitor data
+  print("AirNow, AirSIS, and WRCC data...")
+  an_ws <- get_monitor_daterange(dt1, dt2, states, "airnow")
+  as_ws <- get_monitor_daterange(dt1, dt2, states, "airsis")
+  wr_ws <- get_monitor_daterange(dt1, dt2, states, "wrcc")
+  mon <- do.call(rbind, c(an_ws, as_ws, wr_ws))
+  
+  an_vg <- create_airnow_variograms(mon)
+  # trying a larger fraction of test data to make a more complete RF model
+  mon_split <- split_airnow_data(mon, test_fraction = 0.3)
+  an_ok <- krige_airnow(mon_split, an_vg)
+  
+  ank_complete <- krige_airnow_all(mon, mon, an_vg) %>%
+    select(monitorID, Day, PM25_log_ANK, PM25_log_var) %>%
+    distinct()
+
+  # Prep HRRR-smoke
+  hrrr <- hrrr_at_sites(mon, input_path = "../rapidfire_project/data/hrrr/processed/")
+  
+  # Prep MAIAC AOD
+  print("Preparing MAIAC...")
+  maiac <- maiac_at_airnow(mon, maiac_path = maiac_path)
+     
+  # Get and prep PurpleAir data For dates prior to April 5, 2019, the data must
+  # be acquired by create_purpleair_archive before running this script
+  print("PurpleAir data...")
+  if (is.null(pa_data)) {
+    stop("PurpleAir data must be provided and will not be acquired at runtime")
+  } else {
+    pa_data <- readRDS(pa_data) %>%
+      filter(Date >= dt1,
+             Date <=dt2)
+  }
+  pas <- purpleair_spatial(pa_data)
+  pa_clean <- purpleair_clean_spatial_outliers(pas)
+  pa_vg <- create_purpleair_variograms(pa_clean, cutoff = pa_cutoff)
+  
+  # Krige purple air data for all locations in the monitor data set
+  pa_ok <- krige_purpleair(pa_clean, mon, pa_vg)
+  
+  # Now need to put altogether in prep for RF modeling
+  print("Combining inputs for modeling...")
+  train <- mon_split$train@data %>%
+    mutate(Split = "Train")
+  test <- mon_split$test@data %>%
+    mutate(Split = "Test")
+  
+  # These have the measured PM25 - the target variable
+  model_in <- bind_rows(train, test)
+  
+  # All the inputs
+  # AirNow Kriged
+  ank_in <- an_ok@data %>%
+    select(monitorID, Day, PM25_log_ANK = var1.pred)
+  # PurpleAir Kriged
+  pak_in <- pa_ok@data %>%
+    select(monitorID, Day, PM25_log_PAK = purp.pred)
+  # HRRR
+  hrrr_in <- hrrr %>%
+    select(-PM25, -Hours, -PM25_log)
+  # MAIAC AOD
+  maiac_in <- maiac %>%
+    select(monitorID, Day, MAIAC_AOD)
+  
+  model_in <- model_in %>%
+    left_join(ank_in, by = c("monitorID", "Day")) %>%
+    left_join(pak_in, by = c("monitorID", "Day")) %>%
+    left_join(hrrr_in, by = c("monitorID", "Day")) %>%
+    left_join(maiac_in, by = c("monitorID", "Day"))
+  
+  # # Check for missing values
+  # model_in <- model_in %>%
+  #   filter(!is.na(PM25_bluesky))
+  
+  # Replace missing and non-finite values with overall median
+  model_in <- model_in %>%
+    mutate(across(PM25_log_PAK:MAIAC_AOD,
+                  ~if_else(is.finite(.x), .x, median(.x, na.rm = TRUE))))
+  
+  # Train the model
+  set.seed(seed)
+  train_control <- caret::trainControl(method = "cv", number = 10)
+  tune_grid <- data.frame(mtry = c(2,3,4,5))
+  
+  model_in_test <- filter(model_in, Split == "Test") %>%
+    filter(!is.na(PM25_log_ANK))
+  
+  model <- caret::train(PM25_log ~ PM25_log_ANK + PM25_log_PAK + MAIAC_AOD +
+                          HPBL + RH + UGRD + VGRD + TMP + MASSDEN,
+                        data = model_in_test, tuneGrid = tune_grid, do.trace = 100,
+                        ntree = 500, trControl = train_control, method = "rf",
+                        importance = TRUE)
+  
+  print(model)
+  
+  # Now, krige all the monitor sites and make a prediction at each. Then return
+  # both the model and the data frame including the inputs and prediction.
+  output <- bind_rows(train, test) %>%
+    left_join(ank_complete, by = c("monitorID", "Day")) %>%
+    left_join(pak_in, by = c("monitorID", "Day")) %>%
+    left_join(hrrr_in, by = c("monitorID", "Day")) %>%
+    left_join(maiac_in, by = c("monitorID", "Day")) %>%
+    filter(if_all(where(is.numeric), is.finite))
+  
+  output$PM25_log_RF <- predict(model$finalModel, output)
+  list(model = model, output=output)
+  
+}
+

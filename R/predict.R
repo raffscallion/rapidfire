@@ -114,3 +114,63 @@ predict_locs <- function(dt1, dt2, states = "CA", model, locations,
   results$PM25_log_RF <- predict(model, results)
   return(results)
 }
+
+
+predict_locs_h <- function(dt1, dt2, states = "CA", model, locations,
+                         pa_cutoff = 100000, pa_data = NULL,
+                         hrrr_path = "./data/hrrr/processed/") {
+  
+  # Get and prep AirNow and mobile monitor data
+  print("AirNow, AirSIS, and WRCC data...")
+  an_ws <- get_monitor_daterange(dt1, dt2, states, "airnow")
+  as_ws <- get_monitor_daterange(dt1, dt2, states, "airsis")
+  wr_ws <- get_monitor_daterange(dt1, dt2, states, "wrcc")
+  mon <- do.call(rbind, c(an_ws, as_ws, wr_ws))
+  
+  an_vg <- create_airnow_variograms(mon)
+  ank <- krige_airnow_sitedates(mon, locations, an_vg)
+  
+  # Prep MAIAC AOD
+  print("Preparing MAIAC...")
+  maiac <- maiac_at_airnow(locations)
+  
+  # Prep HRRR-smoke
+  print("Preparing HRRR-smoke")
+  hrrr <- hrrr_at_sites(mon, input_path = hrrr_path)
+  
+  # the data must created by pa_build_dataset
+  print("PurpleAir data...")
+  pa_data <- readRDS(pa_data) %>%
+    filter(Date >= dt1,
+           Date <=dt2)
+  
+  pas <- purpleair_spatial(pa_data)
+  pa_clean <- purpleair_clean_spatial_outliers(pas)
+  pa_vg <- create_purpleair_variograms(pa_clean, cutoff = pa_cutoff)
+  
+  # Krige purple air data for all locations in the monitor data set
+  pa_ok <- krige_purpleair_sitedates(pa_clean, locations, pa_vg)
+  
+  # All the inputs
+  # PurpleAir Kriged
+  pak_in <- pa_ok %>%
+    select(monitorID, Day, PM25_log_PAK)
+  # HRRR
+  hrrr_in <- hrrr %>%
+    select(-PM25, -Hours, -PM25_log)
+  # MAIAC AOD
+  maiac_in <- maiac %>%
+    select(monitorID, Day, MAIAC_AOD)
+  
+  results <- ank %>%
+    left_join(pak_in, by = c("monitorID", "Day")) %>%
+    left_join(hrrr_in, by = c("monitorID", "Day")) %>%
+    left_join(maiac_in, by = c("monitorID", "Day")) %>%
+    # Replace missing and non-finite values with overall median
+    mutate(across(where(is.numeric),
+                  ~ifelse(is.finite(.x), .x, median(.x, na.rm = TRUE))))
+  
+  # How do I require randomForest be loaded here?
+  results$PM25_log_RF <- predict(model, results)
+  return(results)
+}

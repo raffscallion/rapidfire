@@ -39,8 +39,7 @@ BlueSky-CMAQ output created during the HAQAST campaign (see
 If "nominal", instead use a nominal placeholder value for BlueSky PM2.5 of
 0.1, which will have a near neutral impact on predictions.}
 
-\item{pa_data}{Optional PurpleAir data in pas-like format. If not provided, a
-download will be attempted.}
+\item{pa_data}{PurpleAir data in pas-like format.}
 }
 \value{
 A dataframe with all model input values and the resulting predictions

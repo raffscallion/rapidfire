@@ -108,13 +108,55 @@ calculate_layer_sum <- function(ras_list, layer) {
 
 }
 
-# This is only theoretical at the moment. locs need to be a SpatVector and probably in the
-# same coords.
+#' hrrrr_at_sites
+#'
+#' Extract smoke PM2.5, surface temperature, winds, RF, precip, and planetary boundary
+#' layer height from pre-downloaded and processed HRRRR-smoke data
+#'
+#' @param mon A SpatialPointsDataFrame with monitor data such as from
+#'   \code{\link{recast_monitors}}
+#'
+#' @return The data frame from \emph{mon} with the extracted values from the HRRR-smoke
+#'   data appended
+#' @export
+#'
+#' @examples hrrrr <- hrrr_at_sites(mon)
+hrrr_at_sites <- function(mon, input_path = "./data/hrrr/processed/") {
+  
+  date <- sort(unique(mon$Day))
+  
+  # for each date and each variable
+  var <- c("HPBL", "RH", "UGRD", "VGRD", "TMP", "MASSDEN")
+  cases <- tidyr::expand_grid(date, var)
+
+  one_day <- function(date, var) {
+    i <- mon$Day == date
+    l = mon[i, ]
+    vals <- extract_hrrr(date, var, l, input_path)
+    colnames(vals) <- "hrrr_var"
+    df <- bind_cols(l@data, vals) |>
+      mutate(hrrr_name = var)
+    df
+  }
+  res <- purrr::pmap(cases, one_day) |>
+    purrr::list_rbind() |>
+    tidyr::pivot_wider(names_from = hrrr_name, values_from = hrrr_var)
+  
+}
+
+
 extract_hrrr <- function(date, var, locs, input_path = "./data/hrrr/processed/") {
 
-  filename <- paste(var, strftime(date, "%Y%m%d"), "hrrrsmoke.tif", sep = "")
+  filename <- paste(var, strftime(date, "%Y%m%d"), "hrrrsmoke.tif", sep = "_")
   filename <- fs::path_join(c(input_path, filename))
   r <- terra::rast(filename)
-  vals <- terra::extract(r, locs)
+
+  # Pull lon/lat out of the SpatialPointsDF in the same coords as the raster
+  proj <- terra::crs(r)
+  ltrans <- sp::spTransform(locs, proj)
+  ll <- sp::coordinates(ltrans)
+  vals <- terra::extract(x = terra::subset(r, 1), ll)
+  colnames(vals) <- var
+  vals
   
 }
