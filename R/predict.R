@@ -116,9 +116,25 @@ predict_locs <- function(dt1, dt2, states = "CA", model, locations,
 }
 
 
+#' Title
+#'
+#' @param dt1 
+#' @param dt2 
+#' @param states 
+#' @param model 
+#' @param locations 
+#' @param pa_cutoff 
+#' @param pa_data 
+#' @param hrrr_path 
+#'
+#' @returns
+#' @export
+#'
+#' @examples
 predict_locs_h <- function(dt1, dt2, states = "CA", model, locations,
                          pa_cutoff = 100000, pa_data = NULL,
-                         hrrr_path = "./data/hrrr/processed/") {
+                         hrrr_path = "./data/hrrr/processed/",
+                         maiac_path = "./data/MAIAC/C61/") {
   
   # Get and prep AirNow and mobile monitor data
   print("AirNow, AirSIS, and WRCC data...")
@@ -126,38 +142,38 @@ predict_locs_h <- function(dt1, dt2, states = "CA", model, locations,
   as_ws <- get_monitor_daterange(dt1, dt2, states, "airsis")
   wr_ws <- get_monitor_daterange(dt1, dt2, states, "wrcc")
   mon <- do.call(rbind, c(an_ws, as_ws, wr_ws))
-  
+
   an_vg <- create_airnow_variograms(mon)
   ank <- krige_airnow_sitedates(mon, locations, an_vg)
   
   # Prep MAIAC AOD
   print("Preparing MAIAC...")
-  maiac <- maiac_at_airnow(locations)
+  maiac <- maiac_at_airnow(locations, maiac_path)
   
   # Prep HRRR-smoke
   print("Preparing HRRR-smoke")
-  hrrr <- hrrr_at_sites(mon, input_path = hrrr_path)
+  hrrr <- hrrr_at_sites(locations, input_path = hrrr_path)
   
   # the data must created by pa_build_dataset
   print("PurpleAir data...")
   pa_data <- readRDS(pa_data) %>%
     filter(Date >= dt1,
            Date <=dt2)
-  
+
   pas <- purpleair_spatial(pa_data)
   pa_clean <- purpleair_clean_spatial_outliers(pas)
   pa_vg <- create_purpleair_variograms(pa_clean, cutoff = pa_cutoff)
-  
+
   # Krige purple air data for all locations in the monitor data set
   pa_ok <- krige_purpleair_sitedates(pa_clean, locations, pa_vg)
-  
+
   # All the inputs
   # PurpleAir Kriged
   pak_in <- pa_ok %>%
     select(monitorID, Day, PM25_log_PAK)
   # HRRR
   hrrr_in <- hrrr %>%
-    select(-PM25, -Hours, -PM25_log)
+    select(monitorID, Day, HPBL, RH, UGRD, VGRD, TMP, MASSDEN)
   # MAIAC AOD
   maiac_in <- maiac %>%
     select(monitorID, Day, MAIAC_AOD)

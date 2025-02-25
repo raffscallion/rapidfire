@@ -25,5 +25,5 @@ maiac_download(
 https://modis-land.gsfc.nasa.gov/pdf/sn_bound_10deg.txt}
 }
 \description{
-Download MAIAC collection 6 data from the USGS archive
+Download MAIAC collection 6.1 data from the USGS archive
 }
