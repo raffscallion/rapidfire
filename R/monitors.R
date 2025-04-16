@@ -340,7 +340,7 @@ krige_airnow_sitedates <- function(an, outlocs, vgms) {
     outlocs <- outlocs[outlocs$Day == date,]
     print(date)
     ok <- gstat::krige(PM25_log ~ 1, locations = locs, newdata = outlocs,
-                       model = mod)
+                       model = mod, maxdist = 200000)
 
     # Attach to measured values
     output <- outlocs@data
