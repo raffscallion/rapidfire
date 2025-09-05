@@ -1,83 +1,93 @@
 
-# Data pool location for MAIAC MCD19A2
-# https://e4ftl01.cr.usgs.gov/MOTA/MCD19A2.006/
 
-
-# For a given bounding box, return the MODIS tiles needed for coverage using the
-# MODIS siusoidal grid. Definition found at
-# https://modis-land.gsfc.nasa.gov/pdf/sn_bound_10deg.txt
-modis_tile_pick <- function(llat, ulat, llon, rlon) {
-
-  grid <- read.table("./data/MAIAC/modis_grid/sn_bound_10deg.txt", header = TRUE,
-                   row.names = NULL, sep = "", skip = 6, nrow = 648)
-  # Get tile for each corner
-  ur <- grid %>%
-    filter(lon_min < rlon, lon_max > rlon,
-           lat_min < ulat, lat_max > ulat)
-  lr <- grid %>%
-    filter(lon_min < rlon, lon_max > rlon,
-           lat_min < llat, lat_max > llat)
-  ul <- grid %>%
-    filter(lon_min < llon, lon_max > llon,
-           lat_min < ulat, lat_max > ulat)
-  ll <- grid %>%
-    filter(lon_min < llon, lon_max > llon,
-           lat_min < llat, lat_max > llat)
-
-  all <- bind_rows(ur, lr, ul, ll) %>%
-    distinct()
-
-}
-
-#' maiac_download
+#' Title
 #'
-#' Download MAIAC collection 6.1 data from the USGS archive
+#' @param dt 
+#' @param user 
+#' @param password 
+#' @param outpath 
+#' @param bounding_box 
+#' @param tz 
 #'
-#' @param dt Date to retrieve
-#' @param user Username NASA Earthdata
-#' @param password Password for NASA Earthdata
-#' @param outpath output path to write files
-#' @param tiles_needed specific MODIS tiles required for your domain. See
-#'   https://modis-land.gsfc.nasa.gov/pdf/sn_bound_10deg.txt
-#'
-#' @return
+#' @returns
 #' @export
 #'
 #' @examples
-maiac_download <- function(dt, user, password, outpath = "./data/MAIAC/",
-                           tiles_needed = c("h08v04", "h08v05", "h09v04")) {
-
-  base_url <- "https://e4ftl01.cr.usgs.gov/MOTA/MCD19A2.061/"
-
+maiac_acquire <- function(dt, user, password, outpath = "./raw_data/MAIAC/",
+                          bounding_box = c(-124.5, 32.5, -114, 42.1),
+                          tz = "America/Los_Angeles") {
+  
+  # Construct date query based on time zone
+  date_local <- as.POSIXct(dt, tz = tz)
+  end_date_local <- date_local + lubridate::days(1)
+  
   # Date
-  dt_str <- strftime(dt, format = "%Y.%m.%d")
+  dt_str <- strftime(date_local, tz = "UTC", format = "%Y-%m-%dT%H:%M:%SZ")
+  end_dt_str <- strftime(end_date_local, tz = "UTC", format = "%Y-%m-%dT%H:%M:%SZ")
+  temporal_str <- paste(dt_str, end_dt_str, sep = ",")
+  
+  # Spatial query
+  bounding_box_str <- paste(bounding_box, collapse = ",")
+  
+  # set up credentials to EarthData archives
+  earthdatalogin::edl_netrc(username = user, password = password)
+  
+  # First check for the regular MAIAC files (MCD19A2 C6.1). If those aren't ready yet,
+  # look for the NRT versions (MCD19A2N C6.1NRT)
+  concept_id <- "C2324689816-LPCLOUD"
+  
+  url <- paste0("https://cmr.earthdata.nasa.gov/search/granules.json?collection_concept_id=",
+                concept_id, "&temporal=", temporal_str, "&bounding_box=", bounding_box_str)
+  
+  result <- RCurl::getURL(url)
+  js <- jsonlite::fromJSON(result)
+  links <- js$feed$entry$links
+  
+  if (is.null(links)) {
+    warning("No MAIAC data found, looking for NRT version...")
+    
+    # Look for NRT data
+    concept_id <- "C2407807500-LANCEMODIS"
+    url <- paste0("https://cmr.earthdata.nasa.gov/search/granules.json?collection_concept_id=",
+                  concept_id, "&temporal=", temporal_str, "&bounding_box=", bounding_box_str)
+    result <- RCurl::getURL(url)
+    js <- jsonlite::fromJSON(result)
+    links <- js$feed$entry$links
+    
+    if (is.null(links)) {
+      warning("No MAIAC NRT data found either...")
+      return(NULL)
+    }
+    
+    df <- purrr::list_rbind(links)
+    df <- df |>
+      dplyr::filter(stringr::str_ends(href, ".hdf"))
 
-  # Need to get contents of the folder to create the correct filenames
-  folder <- paste0(base_url, dt_str)
-  all_files <- rvest::read_html(folder) %>%
-    rvest::html_elements("a") %>%
-    rvest::html_text()
-
-  # File the filenames that fit the pattern for this date and tile
-  dt_str2 <- strftime(dt, format = "%Y%j")
-  patterns <- paste("MCD19A2.A", dt_str2, ".", tiles_needed, ".+hdf$",
-                    sep = "")
-  files_needed <- purrr::map_chr(patterns,
-                                 ~stringr::str_subset(all_files, pattern = .x))
-
-  # If the file already exists on disk, just move on to the next one
-  write_disk_w_skip <- purrr::possibly(httr::write_disk, NULL)
-
-  # Now, download each file
-  download_one <- function(filename, user, pw) {
-    fileUrl <- paste0(folder, "/", filename)
-    httr::GET(fileUrl, httr::authenticate(user, pw),
-              write_disk_w_skip(paste0(outpath, filename)), httr::timeout(60))
+  } else {
+    df <- purrr::list_rbind(links)
+    df <- df |>
+      dplyr::filter(stringr::str_starts(title, "Download") & stringr::str_ends(title, ".hdf"))
+    
   }
-
-  purrr::walk(files_needed, download_one, user, password)
+  
+  urls <- df$href
+  
+  # skip any files we already have
+  write_new_raster <- purrr::possibly(terra::writeRaster, otherwise = NULL)
+  
+  download_raster <- function(url) {
+    raster <- terra::rast(url)
+    fname <- stringr::str_split_1(url, "/")
+    fname <- fname[length(fname)]
+    fname <- paste0(fs::path_ext_remove(fname), ".tif")
+    outfile <- fs::path_join(c(outpath, fname))
+    write_new_raster(raster, outfile)
+  }
+  
+  purrr::walk(urls, download_raster, .progress = TRUE)
 
 }
+
 
 safe_cut <- purrr::possibly(`[`, otherwise = NULL)
 # Need to handle bad files with a passthrough here
