@@ -238,7 +238,7 @@ krige_airnow <- function(an_data, vgms) {
     train <- an_data$train
     train <- train[train$Day == date,]
     ok <- gstat::krige(PM25_log ~ 1, locations = train, newdata = test,
-                       model = mod)
+                       model = mod, maxdist = 100000)
 
     # Attach to measured values
     test$var1.pred <- ok$var1.pred
@@ -293,7 +293,7 @@ krige_airnow_all <- function(an, outlocs, vgms) {
     outlocs <- outlocs[outlocs$Day == date,]
     print(date)
     ok <- gstat::krige(PM25_log ~ 1, locations = locs, newdata = outlocs,
-                       model = mod)
+                       model = mod, maxdist = 100000)
 
     # Attach to measured values
     output <- outlocs@data
@@ -340,7 +340,7 @@ krige_airnow_sitedates <- function(an, outlocs, vgms) {
     outlocs <- outlocs[outlocs$Day == date,]
     print(date)
     ok <- gstat::krige(PM25_log ~ 1, locations = locs, newdata = outlocs,
-                       model = mod, maxdist = 200000)
+                       model = mod, maxdist = 100000)
 
     # Attach to measured values
     output <- outlocs@data
