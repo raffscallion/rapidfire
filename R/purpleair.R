@@ -116,6 +116,9 @@ pa_sensor_history <- function(sensor_index, start_date, end_date, key) {
                   sensor_index,
                   "/history")
 
+    # PurpleAir API has mysterious rate limits - adding pause here to try to help
+    Sys.sleep(3)
+    
     # If this doesn't work - take a 30 minute pause
     for(i in 1:4){
       if (i > 1) {
