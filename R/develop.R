@@ -177,8 +177,23 @@ develop_model <- function(dt1, dt2, states, pa_cutoff = 100000, seed = 1977,
 }
 
 # New version substituting HRRR-smoke for both NARR and BlueSky
+#' Title
+#'
+#' @param dt1 
+#' @param dt2 
+#' @param states 
+#' @param pa_cutoff 
+#' @param seed 
+#' @param pa_data 
+#' @param maiac_path 
+#'
+#' @returns
+#' @export
+#'
+#' @examples
 develop_model_h <- function(dt1, dt2, states, pa_cutoff = 100000, seed = 1977,
-                          pa_data = NULL, maiac_path = "./data/MAIAC/") {
+                          pa_data = NULL, maiac_path = "./data/MAIAC/C61/",
+                          hrrr_path = "./data/hrrr/processed/") {
   
   # Get and prep AirNow and mobile monitor data
   print("AirNow, AirSIS, and WRCC data...")
@@ -186,7 +201,7 @@ develop_model_h <- function(dt1, dt2, states, pa_cutoff = 100000, seed = 1977,
   as_ws <- get_monitor_daterange(dt1, dt2, states, "airsis")
   wr_ws <- get_monitor_daterange(dt1, dt2, states, "wrcc")
   mon <- do.call(rbind, c(an_ws, as_ws, wr_ws))
-  
+
   an_vg <- create_airnow_variograms(mon)
   # trying a larger fraction of test data to make a more complete RF model
   mon_split <- split_airnow_data(mon, test_fraction = 0.3)
@@ -197,8 +212,8 @@ develop_model_h <- function(dt1, dt2, states, pa_cutoff = 100000, seed = 1977,
     distinct()
 
   # Prep HRRR-smoke
-  hrrr <- hrrr_at_sites(mon, input_path = "../rapidfire_project/data/hrrr/processed/")
-  
+  hrrr <- hrrr_at_sites(mon, input_path = hrrr_path)
+
   # Prep MAIAC AOD
   print("Preparing MAIAC...")
   maiac <- maiac_at_airnow(mon, maiac_path = maiac_path)
@@ -253,7 +268,7 @@ develop_model_h <- function(dt1, dt2, states, pa_cutoff = 100000, seed = 1977,
   # # Check for missing values
   # model_in <- model_in %>%
   #   filter(!is.na(PM25_bluesky))
-  
+
   # Replace missing and non-finite values with overall median
   model_in <- model_in %>%
     mutate(across(PM25_log_PAK:MAIAC_AOD,

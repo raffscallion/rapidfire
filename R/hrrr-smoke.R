@@ -103,7 +103,7 @@ calculate_layer_sum <- function(ras_list, layer) {
   indices <- purrr::map(ras_list, \(x) which(stringr::str_starts(x@ptr$names, layer)))
   # This collapses to a single SpatRaster with just the layer of interest across time
   stack <- purrr::map2(ras_list, indices, \(x, y) x[[y]]) |>
-    rast()
+    terra::rast()
   ras <- app(stack, sum)
 
 }
