@@ -1,18 +1,19 @@
 
 
-#' Title
+#' Download MAIAC AOD data from NASA EartData archive and save it as tif
 #'
-#' @param dt 
-#' @param user 
-#' @param password 
-#' @param outpath 
-#' @param bounding_box 
-#' @param tz 
+#' @param dt character or date - date of MAIAC data to acquire
+#' @param user username for NASA EarthData login
+#' @param password password for NASA EartData login
+#' @param outpath output path for files
+#' @param bounding_box a vector of coordinates, x1, y1, x2, y2 to bound the request. The
+#'   default bounding box covers California
+#' @param tz time zone for the requested location (default is America/Los_Angeles)
 #'
-#' @returns
+#' @returns Returns the list of tif files and downloads files to disk
 #' @export
 #'
-#' @examples
+#' @examples maiac_acquire("2025-09-05", user = u, password = p)
 maiac_acquire <- function(dt, user, password, outpath = "./raw_data/MAIAC/",
                           bounding_box = c(-124.5, 32.5, -114, 42.1),
                           tz = "America/Los_Angeles") {
@@ -82,16 +83,78 @@ maiac_acquire <- function(dt, user, password, outpath = "./raw_data/MAIAC/",
     fname <- paste0(fs::path_ext_remove(fname), ".tif")
     outfile <- fs::path_join(c(outpath, fname))
     write_new_raster(raster, outfile)
+    return(outfile)
   }
   
-  purrr::walk(urls, download_raster, .progress = TRUE)
+  # return the list of tif files downloaded (or skipped)
+  files <- purrr::map_chr(urls, download_raster, .progress = TRUE)
 
 }
+
+# Merge tiles and fill gaps. We keep in native projection to preserve info.
+maiac_preprocess <- function(dt, input_path = "./raw_data/MAIAC/", 
+                             output_path = "./processed_data/MAIAC/",
+                             overwrite = FALSE) {
+  
+  # Merge all passed tiles - confirm they are the same date
+  date_str <- paste0("A", strftime(dt, format = "%Y%j"))
+  reg <- paste0(".+", date_str, ".+tif")
+  files <- fs::dir_ls(input_path, regexp = reg)
+
+  process_tiles <- function(file) {
+    r_raw <- terra::rast(file)
+    # Get all the layers for AOD at 470 nm (the native for the algorithm)
+    layers_needed <- which(strtrim(terra::names(r_raw), 17) == "Optical_Depth_047")
+    r_sub <- terra::subset(r_raw, layers_needed)
+    # Combine overpasses with mean
+    r <- terra::mean(r_sub, na.rm = TRUE)
+  }
+  tiles <- purrr::map(files, process_tiles)
+  
+  # Mosiac the tiles
+  maiac <- purrr::reduce(tiles, terra::mosaic, fun = "mean")
+  
+  # Fill gaps
+  maiac <- maiac_fill_gaps_complete(maiac)
+  
+  # Export file
+  outfile <- fs::path_join(c(output_path, 
+                             paste0("MAIAC_processed_", 
+                                    strftime(dt, format = "%Y-%m-%d"), ".tif")))
+  
+  if (overwrite) {
+    terra::writeRaster(maiac, outfile, overwrite = TRUE)
+  } else {
+    if (fs::file_exists(outfile)) {
+      warning("MAIAC processed file already exists. Skipping.")
+    } else {
+      terra::writeRaster(maiac, outfile, overwrite = FALSE)  
+    }
+  }
+  
+  return(maiac)
+  
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 safe_cut <- purrr::possibly(`[`, otherwise = NULL)
 # Need to handle bad files with a passthrough here
 
+
+# Read a MAIAC file from disk and flatten
 maiac_aod <- function(fname) {
 
   sds <- terra::sds(fname)
@@ -106,12 +169,16 @@ maiac_aod <- function(fname) {
 
 }
 
+
+### Deprecated
 maiac_mosaic <- function(tiles) {
 
   purrr::reduce(tiles, terra::mosaic, fun = "mean")
 
 }
 
+
+#### Deprecated
 # Use raster::focal to fill in some missing values by interpolating neighbors,
 # Then replace the remaining missing values with the median value
 maiac_fill_gaps <- function(maiac, window = 7) {
@@ -133,13 +200,13 @@ maiac_fill_gaps_complete <- function(maiac) {
   md <- terra::global(maiac, fun = median, na.rm = TRUE) %>%
     .$global
 
-  fill1 <- terra::focal(maiac, w = 5, fun = "mean", na.rm = TRUE, na.only = TRUE)
+  fill1 <- terra::focal(maiac, w = 5, fun = "mean", na.rm = TRUE, na.policy = "only")
   blanks <- fill1 == 0
   fill1[blanks] <- NA
-  fill2 <- terra::focal(fill1, w = 9, fun = "mean", na.rm = TRUE, na.only = TRUE)
+  fill2 <- terra::focal(fill1, w = 9, fun = "mean", na.rm = TRUE, na.policy = "only")
   blanks <- fill2 == 0
   fill2[blanks] <- NA
-  fill3 <- terra::focal(fill2, w = 25, fun = "mean", na.rm = TRUE, na.only = TRUE)
+  fill3 <- terra::focal(fill2, w = 25, fun = "mean", na.rm = TRUE, na.policy = "only")
   blanks <- fill3 == 0
   med_fill <- blanks * md
   final <- fill3 + med_fill
@@ -156,7 +223,8 @@ extract_maiac <- function(maiac, locs) {
 }
 
 maiac_one_day <- function(dt, input_path = "./data/MAIAC/",
-                          tiles_needed = c("h08v04", "h08v05", "h09v04")) {
+                          tiles_needed = c("h08v04", "h08v05", "h09v04"),
+                          allow_missing = NULL) {
 
   date_str <- strftime(dt, format = "%Y%j")
   file_prefix <- paste0("MCD19A2.A", date_str)
@@ -168,6 +236,16 @@ maiac_one_day <- function(dt, input_path = "./data/MAIAC/",
   files <- stringr::str_subset(all_files, pattern = pattern)
   paths <- paste0(input_path, files)
 
+  # If no MAIAC data for date and allow_missing set, load dummy data with AOD = 0.15
+  if (length(files) == 0) {
+    if ("MAIAC" %in% allow_missing) {
+      warning("No MAIAC data for ", strftime(dt, "%Y-%m-%d"))
+      return(NULL)
+    } else {
+      stop("No MAIAC data for ", strftime(dt, "%Y-%m-%d"))
+    }
+  }
+  
   tiles <- purrr::map(paths, maiac_aod)
   # Remove bad tiles
   tiles <- Filter(Negate(is.null), tiles)
@@ -193,16 +271,23 @@ maiac_one_day <- function(dt, input_path = "./data/MAIAC/",
 #'
 #' @examples  maiac <- maiac_at_airnow(mon)
 maiac_at_airnow <- function(an, maiac_path = "./data/MAIAC/",
-                            tiles_needed = c("h08v04", "h08v05", "h09v04")) {
+                            tiles_needed = c("h08v04", "h08v05", "h09v04"),
+                            allow_missing = NULL) {
 
   daily_extract <- function(dt) {
     print(dt)
-    maiac_aod <- maiac_one_day(dt, input_path = maiac_path, tiles_needed = tiles_needed)
+    maiac_aod <- maiac_one_day(dt, input_path = maiac_path, tiles_needed = tiles_needed,
+                               allow_missing = allow_missing)
     i <- an$Day == dt
     locs = an[i, ]
-    e <- extract_maiac(maiac_aod, locs)
-    df <- locs@data %>%
-      mutate(MAIAC_AOD = e$focal_mean)
+    if (is.null(maiac_aod)) {
+      df <- locs@data |>
+        mutate(MAIAC_AOD = NA)
+    } else {
+      e <- extract_maiac(maiac_aod, locs)
+      df <- locs@data %>%
+        mutate(MAIAC_AOD = e$focal_mean)
+    }
   }
 
   dates <- unique(an$Day)
