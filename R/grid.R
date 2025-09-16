@@ -21,6 +21,20 @@ make_grid <- function(spdf, cellsize) {
   return(grid)
 }
 
+# updated version of make_state_grid using terra. Creates a grid of the given cellsize (in
+# m) that completely covers the input spatial vector
+grid_state <- function(spat_vec, filename, cellsize = 1000) {
+  
+  outline <- terra::project(spat_vec, "epsg:3395")
+  box <- terra::ext(outline)
+  
+  r <- terra::rast(box, resolution = cellsize, crs = terra::crs(outline))
+  # initialize all values as NA
+  r <- terra::init(r, NA)
+  terra::writeRaster(r, filename)
+}
+
+
 
 # Make grid for output that covers an SPDF (such as a state or states)
 make_state_grid <- function(outline, cellsize) {
