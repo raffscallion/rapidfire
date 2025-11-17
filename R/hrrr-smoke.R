@@ -1,12 +1,13 @@
 # Functions for dealing with HRRR-smoke data
 
-create_hrrrsmoke_daily <- function(date, outpath, extent_vector,
+hrrr_process <- function(date, outpath, extent_grid,
                                    tz = "America/Los_Angeles",
+                                   crs = "EPSG:3395",
                                    delete_files = FALSE) {
   
   # determine files needed for 24-hr average over local diurnal time
   start_time <- ISOdate(lubridate::year(date), lubridate::month(date),
-                          lubridate::day(date), 0, tz = tz)
+                        lubridate::day(date), 0, tz = tz)
   # We pull forcast hour 1 (F001) because precip is an accumulation variable. If we take
   # time 0, it will always be zero. Because of this, we need to start an hour (3600 s) early.
   start_time <- start_time - 3600
@@ -16,25 +17,27 @@ create_hrrrsmoke_daily <- function(date, outpath, extent_vector,
   hr_str <- format(times_utc, "%H")
   
   # download the files if we don't already have them in the folder
-  files <- purrr::map2_chr(dt_str, hr_str, \(x, y) acquire_hrrr(x, y, outpath),
+  files <- purrr::map2_chr(dt_str, hr_str, \(x, y) hrrr_acquire(x, y, outpath),
                            .progress = TRUE)
 
   # Calculate the 24-hr average, one layer at a time for all layers but precip
-  cropped_rasters <- purrr::map(files, \(x) subset_hrrr(x, extent_vector))
+  cropped_rasters <- purrr::map(files, \(x) hrrr_subset(x, extent_grid))
   layers <- c("HPBL", "RH", "UGRD", "VGRD", "TMP", "MASSDEN")
   for (lay in layers) {
     mean_raster <- calculate_layer_mean(cropped_rasters, layer = lay)
+    mean_raster <- terra::project(mean_raster, crs)
     filename <- glue::glue("{lay}_{strftime(date, '%Y%m%d')}_hrrrsmoke.tif")
-    filename <- fs::path_join(c(outpath, "processed", filename))
+    filename <- fs::path_join(c(outpath, filename))
     terra::writeRaster(mean_raster, filename, overwrite = TRUE)
   }
-
+  
   # Calculate total precip as a sum of accumulations for each 1-hour forecast
   accum_raster <- calculate_layer_sum(cropped_rasters, layer = "APCP")
+  accum_raster <- terra::project(accum_raster, crs)
   filename <- glue::glue("APCP_{strftime(date, '%Y%m%d')}_hrrrsmoke.tif")
-  filename <- fs::path_join(c(outpath, "processed", filename))
+  filename <- fs::path_join(c(outpath, filename))
   terra::writeRaster(accum_raster, filename, overwrite = TRUE)
-
+  
   if (delete_files) {
     # Delete the grib files
     fs::file_delete(files)
@@ -45,7 +48,56 @@ create_hrrrsmoke_daily <- function(date, outpath, extent_vector,
   
 }
 
-acquire_hrrr <- function(date_str, model_hr, outpath) {
+
+# # This is the deprecated version, but might still be needed for existing processing -
+# # might only be a name change
+# create_hrrrsmoke_daily <- function(date, outpath, extent_vector,
+#                                    tz = "America/Los_Angeles",
+#                                    delete_files = FALSE) {
+#   
+#   # determine files needed for 24-hr average over local diurnal time
+#   start_time <- ISOdate(lubridate::year(date), lubridate::month(date),
+#                           lubridate::day(date), 0, tz = tz)
+#   # We pull forcast hour 1 (F001) because precip is an accumulation variable. If we take
+#   # time 0, it will always be zero. Because of this, we need to start an hour (3600 s) early.
+#   start_time <- start_time - 3600
+#   times <- seq(start_time, length.out = 24, by = "1 hour")
+#   times_utc <- lubridate::with_tz(times, tzone = "UTC")
+#   dt_str <- format(times_utc, "%Y%m%d")
+#   hr_str <- format(times_utc, "%H")
+#   
+#   # download the files if we don't already have them in the folder
+#   files <- purrr::map2_chr(dt_str, hr_str, \(x, y) acquire_hrrr(x, y, outpath),
+#                            .progress = TRUE)
+# 
+#   # Calculate the 24-hr average, one layer at a time for all layers but precip
+#   cropped_rasters <- purrr::map(files, \(x) subset_hrrr(x, extent_vector))
+#   layers <- c("HPBL", "RH", "UGRD", "VGRD", "TMP", "MASSDEN")
+#   for (lay in layers) {
+#     mean_raster <- calculate_layer_mean(cropped_rasters, layer = lay)
+#     filename <- glue::glue("{lay}_{strftime(date, '%Y%m%d')}_hrrrsmoke.tif")
+#     filename <- fs::path_join(c(outpath, "processed", filename))
+#     terra::writeRaster(mean_raster, filename, overwrite = TRUE)
+#   }
+# 
+#   # Calculate total precip as a sum of accumulations for each 1-hour forecast
+#   accum_raster <- calculate_layer_sum(cropped_rasters, layer = "APCP")
+#   filename <- glue::glue("APCP_{strftime(date, '%Y%m%d')}_hrrrsmoke.tif")
+#   filename <- fs::path_join(c(outpath, "processed", filename))
+#   terra::writeRaster(accum_raster, filename, overwrite = TRUE)
+# 
+#   if (delete_files) {
+#     # Delete the grib files
+#     fs::file_delete(files)
+#     # Also delete the idx files
+#     idx <- paste0(files, ".idx")
+#     fs::file_delete(idx)
+#   }
+#   
+# }
+
+
+hrrr_acquire <- function(date_str, model_hr, outpath) {
   # Check for the file in the path
   filename <- glue::glue("{date_str}_hrrr.t{model_hr}z.wrfsfcf01.grib2")
   filepath <- fs::path_join(c(outpath, filename))
@@ -63,50 +115,89 @@ acquire_hrrr <- function(date_str, model_hr, outpath) {
 
 }
 
-subset_hrrr <- function(grib_file, extent_vector = NULL, 
+hrrr_subset <- function(grib_file, extent_grid = NULL, 
                         layers = c("HPBL:surface", "APCP:surface", "RH:2 m above ground",
                                    "UGRD:10 m above ground", "VGRD:10 m above ground",
                                    "TMP:2 m above ground", "MASSDEN:8 m above ground")) {
 
   r <- terra::rast(grib_file)
 
-  # grab the coordinates
-  coords <- terra::crs(r)
-
   # get the variables we want
-  inds <- purrr::map_int(layers, \(x) which(stringr::str_starts(r@ptr$names, x)))
+  inds <- purrr::map_int(layers, \(x) which(stringr::str_starts(names(r), x)))
   r <- r[[inds]]
-
-  # crop to the extent vector supplied
-  if (!is.null(extent_vector)) {
-    # make sure the vector is in the same coordinates
-    extent <- terra::project(extent_vector, coords)
-    r <- terra::crop(r, extent, mask = TRUE)
+  
+  # crop and resample to the template extent grid supplied
+  if (!is.null(extent_grid)) {
+    # reproject to the same coords
+    coords <- terra::crs(extent_grid)
+    r <- terra::project(r, coords)
+    r <- terra::resample(r, extent_grid)
   }
-
+  
   return(r)
-
+  
 }
+
+
+# old version did not resample to grid
+# hrrr_subset <- function(grib_file, extent_vector = NULL, 
+#                         layers = c("HPBL:surface", "APCP:surface", "RH:2 m above ground",
+#                                    "UGRD:10 m above ground", "VGRD:10 m above ground",
+#                                    "TMP:2 m above ground", "MASSDEN:8 m above ground")) {
+# 
+#   r <- terra::rast(grib_file)
+# 
+#   # grab the coordinates
+#   coords <- terra::crs(r)
+# 
+#   # get the variables we want
+#   inds <- purrr::map_int(layers, \(x) which(stringr::str_starts(names(r), x)))
+#   r <- r[[inds]]
+# 
+#   # crop to the extent vector supplied
+#   if (!is.null(extent_vector)) {
+#     # make sure the vector is in the same coordinates
+#     extent <- terra::project(extent_vector, coords)
+#     r <- terra::crop(r, extent, mask = TRUE)
+#   }
+# 
+#   return(r)
+# 
+# }
 
 calculate_layer_mean <- function(ras_list, layer) {
   
   # Select the named layer by index and reduce to the mean
-  indices <- purrr::map(ras_list, \(x) which(stringr::str_starts(x@ptr$names, layer)))
+  indices <- purrr::map(ras_list, \(x) which(stringr::str_starts(names(x), layer)))
   layers <- purrr::map2(ras_list, indices, \(x, y) x[[y]]) |>
     purrr::reduce(terra::mean)
 
 }
 
 calculate_layer_sum <- function(ras_list, layer) {
-  
+
   # Select the named layer by index and reduce to the mean
-  indices <- purrr::map(ras_list, \(x) which(stringr::str_starts(x@ptr$names, layer)))
+  indices <- purrr::map(ras_list, \(x) which(stringr::str_starts(names(x), layer)))
   # This collapses to a single SpatRaster with just the layer of interest across time
   stack <- purrr::map2(ras_list, indices, \(x, y) x[[y]]) |>
     terra::rast()
-  ras <- app(stack, sum)
+  ras <- terra::app(stack, sum)
+  names(ras) <- layer
+  ras
 
 }
+
+# Creates a stacked SpatRaster of hrrr data for a day from preprocessed data in a folder
+hrrr_stack <- function(dt, input_path, variables = c("APCP", "MASSDEN", "TMP", "VGRD",
+                                                     "UGRD", "RH", "HPBL")) {
+
+  files <- paste(variables, strftime(dt, "%Y%m%d"), "hrrrsmoke.tif", sep = "_")
+  files <- fs::path(input_path, files)
+  stack <- terra::rast(files)
+  
+}
+
+
 
 #' hrrrr_at_sites
 #'
