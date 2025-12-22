@@ -14,7 +14,7 @@
 #' @export
 #'
 #' @examples maiac_acquire("2025-09-05", user = u, password = p)
-maiac_acquire <- function(dt, user, password, outpath = "./raw_data/MAIAC/",
+maiac_acquire <- function(dt, user = NULL, password = NULL, outpath = "./raw_data/MAIAC/",
                           bounding_box = c(-124.5, 32.5, -114, 42.1),
                           tz = "America/Los_Angeles") {
   
@@ -32,6 +32,7 @@ maiac_acquire <- function(dt, user, password, outpath = "./raw_data/MAIAC/",
   
   # set up credentials to EarthData archives
   earthdatalogin::edl_netrc(username = user, password = password)
+  #earthdatalogin::edl_netrc()
   
   # First check for the regular MAIAC files (MCD19A2 C6.1). If those aren't ready yet,
   # look for the NRT versions (MCD19A2N C6.1NRT)
@@ -113,9 +114,12 @@ maiac_preprocess <- function(dt, input_path = "./raw_data/MAIAC/",
   
   # Mosiac the tiles
   maiac <- purrr::reduce(tiles, terra::mosaic, fun = "mean")
-  
+
   # Fill gaps
   maiac <- maiac_fill_gaps_complete(maiac)
+  
+  # Rename raster layer
+  names(maiac) <- "MAIAC_AOD"
   
   # Export file
   outfile <- fs::path_join(c(output_path, 
@@ -136,27 +140,46 @@ maiac_preprocess <- function(dt, input_path = "./raw_data/MAIAC/",
   
 }
 
+# This version fills gaps using surrounding data in stages with increasing window sizes.
+# 5x5, then 9x9, then 25x25. Finally filling the remainder with the median value
+maiac_fill_gaps_complete <- function(maiac) {
+
+  md <- terra::global(maiac, fun = median, na.rm = TRUE) %>%
+    .$global
+
+  fill1 <- terra::focal(maiac, w = 5, fun = "mean", na.rm = TRUE, na.policy = "only")
+  blanks <- is.na(fill1)
+  fill1[blanks] <- NA
+  fill2 <- terra::focal(fill1, w = 9, fun = "mean", na.rm = TRUE, na.policy = "only")
+  blanks <- is.na(fill2)
+  fill2[blanks] <- NA
+  fill3 <- terra::focal(fill2, w = 25, fun = "mean", na.rm = TRUE, na.policy = "only")
+  blanks <- is.na(fill3)
+  med_fill <- blanks * md
+  fill3 <- terra::subst(fill3, NA, 0)
+  final <- fill3 + med_fill
+
+}
+
+maiac_regrid <- function(r, extent_grid) {
+  
+  # reproject to the same coords
+  coords <- terra::crs(extent_grid)
+  r <- terra::project(r, coords)
+  r <- terra::resample(r, extent_grid)
+  
+}
 
 
 
-
-
-
-
-
-
-
-
-
-
-
+# Not sure if these are still used
 safe_cut <- purrr::possibly(`[`, otherwise = NULL)
 # Need to handle bad files with a passthrough here
 
 
 # Read a MAIAC file from disk and flatten
 maiac_aod <- function(fname) {
-
+  
   sds <- terra::sds(fname)
   stack <- safe_cut(sds, 1)
   if (!is.null(stack)) {
@@ -166,53 +189,8 @@ maiac_aod <- function(fname) {
   } else {
     return(NULL)
   }
-
+  
 }
-
-
-### Deprecated
-maiac_mosaic <- function(tiles) {
-
-  purrr::reduce(tiles, terra::mosaic, fun = "mean")
-
-}
-
-
-#### Deprecated
-# Use raster::focal to fill in some missing values by interpolating neighbors,
-# Then replace the remaining missing values with the median value
-maiac_fill_gaps <- function(maiac, window = 7) {
-
-  md <- terra::global(maiac, fun = median, na.rm = TRUE) %>%
-    .$global
-  sr <- terra::focal(maiac, w = window, fun = "mean", na.rm = TRUE, na.only = TRUE)
-
-  blank_space <- sr == 0
-  fill <- blank_space * md
-  filled <- sr + fill
-
-}
-
-# This version fills gaps using surrounding data in stages with increasing window sizes.
-# 5x5, then 9x9, then 25x25. Finally filling the remainder with the median value
-maiac_fill_gaps_complete <- function(maiac) {
-
-  md <- terra::global(maiac, fun = median, na.rm = TRUE) %>%
-    .$global
-
-  fill1 <- terra::focal(maiac, w = 5, fun = "mean", na.rm = TRUE, na.policy = "only")
-  blanks <- fill1 == 0
-  fill1[blanks] <- NA
-  fill2 <- terra::focal(fill1, w = 9, fun = "mean", na.rm = TRUE, na.policy = "only")
-  blanks <- fill2 == 0
-  fill2[blanks] <- NA
-  fill3 <- terra::focal(fill2, w = 25, fun = "mean", na.rm = TRUE, na.policy = "only")
-  blanks <- fill3 == 0
-  med_fill <- blanks * md
-  final <- fill3 + med_fill
-
-}
-
 
 extract_maiac <- function(maiac, locs) {
 

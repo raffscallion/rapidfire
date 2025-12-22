@@ -174,7 +174,10 @@ bluesky_at_airnow <- function(an, bluesky_path = "./data/bluesky/NAM",
     if (debug) {
 
       rdf <- raster::as.data.frame(pm24, xy = TRUE)
-      usa <- rgdal::readOGR("U:/SharedData/GIS", "states_lo_res")
+      
+      ### TODO: Replace with non rgdal version
+      #usa <- rgdal::readOGR("U:/SharedData/GIS", "states_lo_res")
+      stop("TODO: Replace with non rgdal version")
       ca <- usa[usa$STATE_ABBR == "CA",]
       ca <- sp::spTransform(ca, sp::CRS("+proj=longlat +datum=WGS84"))
       g <- ggplot(rdf) +
