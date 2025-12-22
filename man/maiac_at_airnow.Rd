@@ -7,7 +7,8 @@
 maiac_at_airnow(
   an,
   maiac_path = "./data/MAIAC/",
-  tiles_needed = c("h08v04", "h08v05", "h09v04")
+  tiles_needed = c("h08v04", "h08v05", "h09v04"),
+  allow_missing = NULL
 )
 }
 \arguments{

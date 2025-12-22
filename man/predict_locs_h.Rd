@@ -13,7 +13,8 @@ predict_locs_h(
   pa_cutoff = 1e+05,
   pa_data = NULL,
   hrrr_path = "./data/hrrr/processed/",
-  maiac_path = "./data/MAIAC/C61/"
+  maiac_path = "./data/MAIAC/C61/",
+  allow_missing = NULL
 )
 }
 \arguments{

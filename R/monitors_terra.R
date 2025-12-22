@@ -1,5 +1,6 @@
 
-# Functions for handling monitor data, updated to use terra rather than sp
+# Functions for handling monitor data, updated to use terra rather than sp.
+# Spatial functions here also work on purpleair sensor data.
 
 # Combine data from airnow and temporary monitors from AirMonitors, clip to an extent, and
 # remove any null data
@@ -54,22 +55,26 @@ monitors_variogram <- function(mon, cutoff = NULL, width = 15000) {
 
 # Given input measurements, output locations, and a variogram, predict values at the
 # output locations
-monitors_krige_points <- function(mon, locs, vgm, maxdist = Inf) {
+monitors_krige_points <- function(mon, locs, vgm, maxdist = Inf, nmax = Inf) {
   
   pts_sf <- sf::st_as_sf(mon)
   ok <- gstat::krige(PM25_log ~ 1, locations = pts_sf, newdata = locs,
-                     model = vgm, maxdist = maxdist)
+                     model = vgm, maxdist = maxdist, nmax = nmax)
   
 }
 
 #Given input measurements, a prediction grid, and a variogram, predict values on the grid
-monitors_krige_grid <- function(mon, grid, vgm, maxdist = Inf) {
+monitors_krige_grid <- function(mon, grid, vgm, maxdist = Inf, nmax = Inf) {
   
   df <- terra::as.data.frame(mon, geom = "XY")
   # make sure all values are finite
   df <- dplyr::filter(df, is.finite(PM25_log))
+  # Need to remove duplicates to avoid singular covarience matrix errors
+  df <- dplyr::summarise(df,
+                         PM25_log = median(PM25_log, na.rm = TRUE),
+                         .by = c(x, y))
   ok <- gstat::gstat(NULL, "PM25_log", PM25_log ~ 1, locations = ~x+y, model = vgm, 
-                     maxdist = maxdist, data = df)
+                     maxdist = maxdist, nmax = nmax, data = df)
   res <- terra::interpolate(grid, ok)
   
 }

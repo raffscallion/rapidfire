@@ -194,6 +194,8 @@ hrrr_stack <- function(dt, input_path, variables = c("APCP", "MASSDEN", "TMP", "
   files <- paste(variables, strftime(dt, "%Y%m%d"), "hrrrsmoke.tif", sep = "_")
   files <- fs::path(input_path, files)
   stack <- terra::rast(files)
+  names(stack) <- variables
+  return(stack)
   
 }
 

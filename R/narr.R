@@ -11,8 +11,9 @@ get_narr <- function(year, vars = c("air.2m", "uwnd.10m", "vwnd.10m", "rhum.2m",
                      out_path = "./data/NARR") {
 
   fnarr <- function(variable, year, path) {
-    Reanalysis::NARRdownloadNetCDF(startYear = year, endYear = year,
-                                   variable = variable, destination = path)
+    stop("TODO: Replace NARR download with avaialble code. I believe new package is called RNCEP")
+    # Reanalysis::NARRdownloadNetCDF(startYear = year, endYear = year,
+    #                                variable = variable, destination = path)
   }
 
   purrr::walk(vars, fnarr, year = year, path = out_path)

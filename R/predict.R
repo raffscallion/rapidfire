@@ -1,5 +1,61 @@
 # Use an existing developed model to predict values at given new locations and dates
 
+# Predict a single day across an output grid
+predict_grid <- function(dt, states = "CA", grid_file, model_file, input_paths ) {
+  
+  # Load template grid
+  grid <- terra::rast(grid_file)
+  
+  # load monitoring data
+  monitoring_file <- fs::path_join(c(input_paths[["monitors"]], 
+                                     paste0("monitors_combined_",
+                                            strftime(dt, "%Y-%m-%d"),
+                                            ".RDS")))
+  mon <- terra::readRDS(monitoring_file)
+  
+  # interpolate to grid
+  mon_vgm <- monitors_variogram(mon)
+  monitor_grid <- monitors_krige_grid(mon, grid, mon_vgm)
+  ank <- monitor_grid[[1]]
+  names(ank) <- "PM25_log_ANK"
+
+  # load met and smoke data from hrrr
+  hrrr <- hrrr_stack(dt, input_paths[["hrrr"]])
+  
+  # load satellite data
+  maiac_file <- fs::path_join(c(input_paths[["maiac"]],
+                                paste0("MAIAC_processed_", strftime(dt, "%Y-%m-%d"), ".tif")))
+  maiac <- terra::rast(maiac_file)
+  
+  # interpolate to grid
+  maiac <- maiac_regrid(maiac, grid)
+  
+  # load sensor data
+  ### Sensor data will be coming from CDPH? Need non-cdph way as well
+  pa_file <- fs::path_join(c(input_paths[["purpleair"]],
+                             paste0("purpleair_processed_",
+                                    strftime(dt, "%Y-%m-%d"),
+                                    ".RDS")))
+  pa <- terra::readRDS(pa_file)
+  
+  # interpolate to grid
+  pa_vgm <- monitors_variogram(pa)
+  pa_grid <- monitors_krige_grid(pa, grid, pa_vgm, nmax = 100)
+  pak <- pa_grid[[1]]
+  names(pak) <- "PM25_log_PAK"
+
+  # combine data
+  stack <- terra::rast(list(ank, pak, hrrr, maiac))
+
+  # run model
+  # YOU ARE HERE
+  
+  # save output
+  
+}
+
+
+
 #' predict_locs
 #'
 #' Uses an existing model, such as developed by \code{\link{develop_model}}, to
@@ -134,7 +190,8 @@ predict_locs <- function(dt1, dt2, states = "CA", model, locations,
 predict_locs_h <- function(dt1, dt2, states = "CA", model, locations,
                          pa_cutoff = 100000, pa_data = NULL,
                          hrrr_path = "./data/hrrr/processed/",
-                         maiac_path = "./data/MAIAC/C61/") {
+                         maiac_path = "./data/MAIAC/C61/",
+                         allow_missing = NULL) {
   
   # Get and prep AirNow and mobile monitor data
   print("AirNow, AirSIS, and WRCC data...")
@@ -148,7 +205,7 @@ predict_locs_h <- function(dt1, dt2, states = "CA", model, locations,
   
   # Prep MAIAC AOD
   print("Preparing MAIAC...")
-  maiac <- maiac_at_airnow(locations, maiac_path)
+  maiac <- maiac_at_airnow(locations, maiac_path, allow_missing = allow_missing)
   
   # Prep HRRR-smoke
   print("Preparing HRRR-smoke")
