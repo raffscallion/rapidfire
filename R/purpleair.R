@@ -1,3 +1,73 @@
+pa_preprocess <- function(dt, duckdb_path, sensors, location_types = 0,
+                          timezone = "America/Los_Angeles",
+                          clean_outliers = TRUE,
+                          crs = "EPSG:3395",
+                          output_path = "./processed_data/purpleair/") {
+  
+  con <- DBI::dbConnect(duckdb::duckdb(), dbdir = duckdb_path)
+  
+  # Pull days around the date from the database before converting to correct tz
+  start <- as.Date(dt) - 1
+  end <- as.Date(dt) + 1
+  df <- tbl(con, "pa_realtime") |>
+    filter(confidence > 60,
+           last_seen > start,
+           last_seen < end) |>
+    collect()
+
+  # Convert to local time and filter to requested date
+  df <- df |>
+    mutate(LocalTime = lubridate::with_tz(last_seen, tzone = timezone),
+           LocalDay = lubridate::floor_date(LocalTime, "days")) |>
+    filter(LocalDay == dt) |>
+    select(sensor_index, LocalTime, LocalDay, pm2.5, confidence)
+  
+  # log-transform and calculate 24-hr average
+  # Convert 0 to 0.01 first
+  avg <- df |>
+    mutate(pm2.5 = if_else(pm2.5 == 0, 0.01, pm2.5),
+           PM25_log = log(pm2.5)) |>
+    summarise(PM25_log = mean(PM25_log, na.rm = TRUE),
+              n = n(),
+              .by = sensor_index)
+  
+  # Join to geolocation and type info from sensors df
+  sensors <- sensors |>
+    select(sensor_index, latitude, longitude, location_type) |>
+    mutate(across(everything(), as.numeric))
+  
+  df <- avg |>
+    left_join(sensors, by = "sensor_index") |>
+    filter(location_type %in% location_types)  
+
+  ## TODO: Add back in once we have a full day of data
+    
+  # # filter based on 75% completeness assuming a sampling rate of once per 30 minutes
+  # df <- df |>
+  #   filter(n >= 36)
+  
+  # combine with above when uncommented
+  df <- df |>
+    select(-n)
+
+  # convert to spatial
+  pa_sp <- terra::vect(df, geom = c("longitude", "latitude"), crs = "EPSG:4326")
+  
+  # project to desired coordinates
+  pa_sp <- terra::project(pa_sp, crs)
+  
+  # clean spatial outliers
+  if (clean_outliers) {
+    pa_sp <- pa_clean_spatial_outliers(pa_sp)  
+  }
+  
+  fname <- paste0("purpleair_processed_", strftime(dt, "%Y-%m-%d"), ".RDS")
+  fname <- fs::path_join(c(output_path, fname))
+  terra::saveRDS(pa_sp, fname)
+  pa_sp
+  
+}
+
 # Get the current data for all sensors within a bounding box. Schedule this to build a db
 #' Title
 #'
@@ -7,18 +77,22 @@
 #' @param selat 
 #' @param max_age 
 #' @param key 
+#' @param dbdir 
 #'
 #' @returns
 #' @export
 #'
 #' @examples
 pa_acquire_realtime <- function(nwlng = -124.41, nwlat = 42.01, selng = -114.13, 
-                                selat = 32.53, max_age = 3600, key = NULL) {
+                                selat = 32.53, max_age = 3600, key = NULL,
+                                dbdir = NULL) {
 
   if (is.null(key)) {
     key <- Sys.getenv("PURPLEAIR_READ_KEY")
   }
-    
+  
+  con <- DBI::dbConnect(duckdb::duckdb(), dbdir = "purpleair.duckdb")
+  
   url <- "https://api.purpleair.com/v1/sensors/"
   
   query_string <- list(
@@ -30,11 +104,11 @@ pa_acquire_realtime <- function(nwlng = -124.41, nwlat = 42.01, selng = -114.13,
     selat = selat,
     selng = selng
   )
-
+  
   tryCatch({
     response <- httr::VERB("GET", url, query = query_string,
-                            httr::content_type("application/octet-stream"),
-                            httr::accept("application/json"))
+                           httr::content_type("application/octet-stream"),
+                           httr::accept("application/json"))
     result <- jsonlite::fromJSON(httr::content(response, "text", encoding = "UTF-8"))
   },
   error = function(e) {
@@ -46,14 +120,18 @@ pa_acquire_realtime <- function(nwlng = -124.41, nwlat = 42.01, selng = -114.13,
   names(df) <- result$fields
   
   df <- df |>
-    mutate(last_seen = as.POSIXct(last_seen, tz = "UTC",
-                                  format = "%FT%TZ"))
-   
+    dplyr::mutate(last_seen = as.POSIXct(last_seen, tz = "UTC",
+                                         format = "%FT%TZ"))
+  
+  recs <- DBI::dbAppendTable(con, "pa_realtime", df)
+  message(paste(recs, "records added:", Sys.time()))
+  DBI::dbDisconnect(con)
+  
 }
 
 
 #' Get all of the PurpleAir sensor indices within a bounding box. See
-#' https://api.purpleair.com/#api-sensors-get-sensors-data
+#' https://api.purpleair.com/#api-sensors-get-sensors-data. Includes indoor and outdoor
 #'
 #' @param nwlng A northwest longitude for the bounding box
 #' @param nwlat A northwest latitude for the bounding box
@@ -75,8 +153,8 @@ pa_find_sensors <- function(nwlng, nwlat, selng, selat, key) {
 
   query_string <- list(
     api_key = key,
-    fields = "name,latitude,longitude,last_seen,date_created",
-    location_type = "0", # outside
+    fields = "name,latitude,longitude,location_type,last_seen,date_created",
+    #location_type = "0", # outside
     max_age = "0",
     nwlng = nwlng,
     nwlat = nwlat,
@@ -216,8 +294,10 @@ pa_process_daily <- function(pa_raw, pa_sensors, timezone = "America/Los_Angeles
 # Increased search distance from 10km to 20km. New test is z-score. Also fail any
 # locations where their are no neighbors within the radius and value of PM25_log > 7
 # (~1000 ug/m3)
+
+# New version here assumes that there is only one day in the spatv
 pa_clean_spatial_outliers <- function(spatv) {
-  
+browser()  
   region_stats2 <- function(ind, var) {
     mean <- mean(var[ind])
     std <- sd(var[ind])
@@ -228,30 +308,56 @@ pa_clean_spatial_outliers <- function(spatv) {
   # Need to convert to sf to use the operator we need
   sfs <- sf::st_as_sf(spatv)
   
-  # Could not get grouping to work, so do this one date at a time manually
-  datelist <- unique(sfs$day_local)
-  
-  calc_daily_stats <- function(dt, sfs) {
-
-    sfs <- filter(sfs, day_local == dt)
-    within <- sf::st_is_within_distance(sfs, dist = 20000) # trying double the search distance
-    stats <- purrr::map_dfr(within, region_stats2, sfs$PM25_log)
-    sfs <- bind_cols(sfs, stats) %>%
-      tidyr::replace_na(list(std = 0)) %>%
-      mutate(ZScore = (PM25_log - mean) / std,
-             Outlier = if_else(abs(ZScore) >= 1.5, 1, 0),
-             Outlier = if_else(n == 1 & PM25_log > 7, 1, Outlier))
-    good_devices <- filter(sfs, Outlier == 0)
+  within <- sf::st_is_within_distance(sfs, dist = 20000) # trying double the search distance
+  stats <- purrr::map_dfr(within, region_stats2, sfs$PM25_log)
+  sfs <- bind_cols(sfs, stats) %>%
+    tidyr::replace_na(list(std = 0)) %>%
+    mutate(ZScore = (PM25_log - mean) / std,
+           Outlier = if_else(abs(ZScore) >= 1.5, 1, 0),
+           Outlier = if_else(n == 1 & PM25_log > 7, 1, Outlier))
+  good_devices <- filter(sfs, Outlier == 0)
     
-  }
-  
-  clean_sf <- purrr::map(datelist, \(x) calc_daily_stats(x, sfs)) |>
-    purrr::list_rbind()
-  
   # convert back to terra
-  spat <- terra::vect(clean_sf)
+  spat <- terra::vect(good_devices)
   
 }
+
+# pa_clean_spatial_outliers <- function(spatv) {
+#   
+#   region_stats2 <- function(ind, var) {
+#     mean <- mean(var[ind])
+#     std <- sd(var[ind])
+#     n <- length(ind)
+#     data.frame(mean, std, n)
+#   }
+#   
+#   # Need to convert to sf to use the operator we need
+#   sfs <- sf::st_as_sf(spatv)
+#   
+#   # Could not get grouping to work, so do this one date at a time manually
+#   datelist <- unique(sfs$day_local)
+#   
+#   calc_daily_stats <- function(dt, sfs) {
+# 
+#     sfs <- filter(sfs, day_local == dt)
+#     within <- sf::st_is_within_distance(sfs, dist = 20000) # trying double the search distance
+#     stats <- purrr::map_dfr(within, region_stats2, sfs$PM25_log)
+#     sfs <- bind_cols(sfs, stats) %>%
+#       tidyr::replace_na(list(std = 0)) %>%
+#       mutate(ZScore = (PM25_log - mean) / std,
+#              Outlier = if_else(abs(ZScore) >= 1.5, 1, 0),
+#              Outlier = if_else(n == 1 & PM25_log > 7, 1, Outlier))
+#     good_devices <- filter(sfs, Outlier == 0)
+#     
+#   }
+#   
+#   clean_sf <- purrr::map(datelist, \(x) calc_daily_stats(x, sfs)) |>
+#     purrr::list_rbind()
+#   
+#   # convert back to terra
+#   spat <- terra::vect(clean_sf)
+#   
+# }
 
 
 
