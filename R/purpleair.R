@@ -1,19 +1,37 @@
+#' Take realtime purpleair data from a duckdb file and create 24-hr averages ready for
+#' interpolation
+#'
+#' @param dt
+#' @param duckdb_path
+#' @param sensors
+#' @param location_types
+#' @param timezone
+#' @param clean_outliers
+#' @param crs
+#' @param output_path
+#'
+#' @returns
+#' @export
+#'
+#' @examples
 pa_preprocess <- function(dt, duckdb_path, sensors, location_types = 0,
                           timezone = "America/Los_Angeles",
                           clean_outliers = TRUE,
                           crs = "EPSG:3395",
                           output_path = "./processed_data/purpleair/") {
-  
+
   con <- DBI::dbConnect(duckdb::duckdb(), dbdir = duckdb_path)
   
   # Pull days around the date from the database before converting to correct tz
   start <- as.Date(dt) - 1
-  end <- as.Date(dt) + 1
+  end <- as.Date(dt) + 2
   df <- tbl(con, "pa_realtime") |>
     filter(confidence > 60,
            last_seen > start,
            last_seen < end) |>
     collect()
+  
+  DBI::dbDisconnect(con)
 
   # Convert to local time and filter to requested date
   df <- df |>
@@ -36,22 +54,17 @@ pa_preprocess <- function(dt, duckdb_path, sensors, location_types = 0,
     select(sensor_index, latitude, longitude, location_type) |>
     mutate(across(everything(), as.numeric))
   
-  df <- avg |>
+  avg <- avg |>
     left_join(sensors, by = "sensor_index") |>
     filter(location_type %in% location_types)  
 
-  ## TODO: Add back in once we have a full day of data
-    
-  # # filter based on 75% completeness assuming a sampling rate of once per 30 minutes
-  # df <- df |>
-  #   filter(n >= 36)
-  
-  # combine with above when uncommented
-  df <- df |>
+  # filter based on 75% completeness assuming a sampling rate of once per 30 minutes
+  avg <- avg |>
+    filter(n >= 36) |>
     select(-n)
 
   # convert to spatial
-  pa_sp <- terra::vect(df, geom = c("longitude", "latitude"), crs = "EPSG:4326")
+  pa_sp <- terra::vect(avg, geom = c("longitude", "latitude"), crs = "EPSG:4326")
   
   # project to desired coordinates
   pa_sp <- terra::project(pa_sp, crs)
@@ -297,7 +310,7 @@ pa_process_daily <- function(pa_raw, pa_sensors, timezone = "America/Los_Angeles
 
 # New version here assumes that there is only one day in the spatv
 pa_clean_spatial_outliers <- function(spatv) {
-browser()  
+
   region_stats2 <- function(ind, var) {
     mean <- mean(var[ind])
     std <- sd(var[ind])

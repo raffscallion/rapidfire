@@ -53,11 +53,34 @@ monitors_variogram <- function(mon, cutoff = NULL, width = 15000) {
   
 }
 
+# Multiday variogram
+monitors_variogram_pooled <- function(mon) {
+  # intialize a Gaussian variagram model to fit with a nugget of 0.02
+  df <- terra::as.data.frame(mon, geom = "XY")
+  # make sure all values are finite
+  df <- dplyr::filter(df, is.finite(PM25_log))
+  # Let the data pick the best model
+  vgm_mod <- gstat::vgm(model =  c("Exp", "Sph", "Gau", "Mat"), nugget = 0.02)
+  vgm_data <- gstat::variogram(PM25_log ~  Day, locations = ~x+y, data = df,
+                                dX = 0)
+  v <- gstat::fit.variogram(vgm_data, vgm_mod)
+
+}
+
 # Given input measurements, output locations, and a variogram, predict values at the
 # output locations
 monitors_krige_points <- function(mon, locs, vgm, maxdist = Inf, nmax = Inf) {
-  
   pts_sf <- sf::st_as_sf(mon)
+  if (class(locs) == "SpatVector") {
+    locs <- sf::st_as_sf(locs)
+  }
+  
+  # Make sure all values are finite and remove duplicates to avoid covariance matrix errors
+  pts_sf <- filter(pts_sf, is.finite(PM25_log))
+  pts_sf <- pts_sf |>
+    summarise(PM25_log = median(PM25_log, na.rm = TRUE),
+              .by = geometry)
+  
   ok <- gstat::krige(PM25_log ~ 1, locations = pts_sf, newdata = locs,
                      model = vgm, maxdist = maxdist, nmax = nmax)
   
@@ -76,6 +99,25 @@ monitors_krige_grid <- function(mon, grid, vgm, maxdist = Inf, nmax = Inf) {
   ok <- gstat::gstat(NULL, "PM25_log", PM25_log ~ 1, locations = ~x+y, model = vgm, 
                      maxdist = maxdist, nmax = nmax, data = df)
   res <- terra::interpolate(grid, ok)
+  
+}
+
+# given a spatvector of monitor data, split into test and training data sets
+monitors_split <- function(mon, test_fraction = 0.3, seed = NULL) {
+  
+  if (is.numeric(seed)) {
+    set.seed(seed)
+  }
+  
+  test_size <- round(length(mon) * test_fraction)
+  i <- seq(1, length(mon), by = 1)
+  test_i <- sample(i, test_size)
+  test <- mon[test_i, ]
+  
+  train_i <- setdiff(i, test_i)
+  train <- mon[train_i, ]
+  
+  list(test=test, train=train)
   
 }
  

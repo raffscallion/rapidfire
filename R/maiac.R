@@ -76,15 +76,23 @@ maiac_acquire <- function(dt, user = NULL, password = NULL, outpath = "./raw_dat
   
   # skip any files we already have
   write_new_raster <- purrr::possibly(terra::writeRaster, otherwise = NULL)
+  safe_download <- purrr::safely(terra::rast)
   
   download_raster <- function(url) {
-    raster <- terra::rast(url)
-    fname <- stringr::str_split_1(url, "/")
-    fname <- fname[length(fname)]
-    fname <- paste0(fs::path_ext_remove(fname), ".tif")
-    outfile <- fs::path_join(c(outpath, fname))
-    write_new_raster(raster, outfile)
-    return(outfile)
+    
+    results <- safe_download(url) 
+
+    if (is.null(results$error)) {
+      raster <- results$result
+      fname <- stringr::str_split_1(url, "/")
+      fname <- fname[length(fname)]
+      fname <- paste0(fs::path_ext_remove(fname), ".tif")
+      outfile <- fs::path_join(c(outpath, fname))
+      write_new_raster(raster, outfile)
+    } else {
+      outfile <- results$error
+    }
+    return(outfile)    
   }
   
   # return the list of tif files downloaded (or skipped)

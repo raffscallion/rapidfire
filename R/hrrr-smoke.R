@@ -1,6 +1,6 @@
 # Functions for dealing with HRRR-smoke data
 
-hrrr_process <- function(date, outpath, extent_grid,
+hrrr_acquire <- function(date, outpath, extent_grid,
                                    tz = "America/Los_Angeles",
                                    crs = "EPSG:3395",
                                    delete_files = FALSE) {
@@ -17,7 +17,7 @@ hrrr_process <- function(date, outpath, extent_grid,
   hr_str <- format(times_utc, "%H")
   
   # download the files if we don't already have them in the folder
-  files <- purrr::map2_chr(dt_str, hr_str, \(x, y) hrrr_acquire(x, y, outpath),
+  files <- purrr::map2_chr(dt_str, hr_str, \(x, y) hrrr_download(x, y, outpath),
                            .progress = TRUE)
 
   # Calculate the 24-hr average, one layer at a time for all layers but precip
@@ -97,7 +97,7 @@ hrrr_process <- function(date, outpath, extent_grid,
 # }
 
 
-hrrr_acquire <- function(date_str, model_hr, outpath) {
+hrrr_download <- function(date_str, model_hr, outpath) {
   # Check for the file in the path
   filename <- glue::glue("{date_str}_hrrr.t{model_hr}z.wrfsfcf01.grib2")
   filepath <- fs::path_join(c(outpath, filename))
