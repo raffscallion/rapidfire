@@ -10,7 +10,8 @@ pa_acquire_realtime(
   selng = -114.13,
   selat = 32.53,
   max_age = 3600,
-  key = NULL
+  key = NULL,
+  dbdir = NULL
 )
 }
 \arguments{
@@ -25,6 +26,8 @@ pa_acquire_realtime(
 \item{max_age}{}
 
 \item{key}{}
+
+\item{dbdir}{}
 }
 \description{
 Title

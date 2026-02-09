@@ -4,6 +4,18 @@
 
 # Combine data from airnow and temporary monitors from AirMonitors, clip to an extent, and
 # remove any null data
+#' Title
+#'
+#' @param date 
+#' @param input_path_airnow 
+#' @param input_path_temp_monitors 
+#' @param output_path 
+#' @param extent 
+#'
+#' @returns
+#' @export
+#'
+#' @examples
 monitors_combine <- function(date, input_path_airnow, input_path_temp_monitors, 
                              output_path = "./processed_data/monitors/",
                              extent = NULL) {
@@ -40,6 +52,16 @@ monitors_combine <- function(date, input_path_airnow, input_path_temp_monitors,
 
 
 # Create variogram from spatvectors
+#' Title
+#'
+#' @param mon 
+#' @param cutoff 
+#' @param width 
+#'
+#' @returns
+#' @export
+#'
+#' @examples
 monitors_variogram <- function(mon, cutoff = NULL, width = 15000) {
   
   # intialize a Gaussian variagram model to fit with a nugget of 0.02
@@ -54,6 +76,14 @@ monitors_variogram <- function(mon, cutoff = NULL, width = 15000) {
 }
 
 # Multiday variogram
+#' Title
+#'
+#' @param mon 
+#'
+#' @returns
+#' @export
+#'
+#' @examples
 monitors_variogram_pooled <- function(mon) {
   # intialize a Gaussian variagram model to fit with a nugget of 0.02
   df <- terra::as.data.frame(mon, geom = "XY")

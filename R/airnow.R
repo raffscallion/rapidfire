@@ -3,6 +3,16 @@
 # This seems more reliable than AirSensor, but doesn't include AIRSIS and other temporary data
 
 
+#' Title
+#'
+#' @param date 
+#' @param output_path 
+#' @param crs 
+#'
+#' @returns
+#' @export
+#'
+#' @examples
 airnow_acquire <- function(date, output_path = "./processed_data/airnow/",
                            crs = "EPSG:3395") {
   

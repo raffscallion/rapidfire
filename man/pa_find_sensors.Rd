@@ -3,7 +3,7 @@
 \name{pa_find_sensors}
 \alias{pa_find_sensors}
 \title{Get all of the PurpleAir sensor indices within a bounding box. See
-https://api.purpleair.com/#api-sensors-get-sensors-data}
+https://api.purpleair.com/#api-sensors-get-sensors-data. Includes indoor and outdoor}
 \usage{
 pa_find_sensors(nwlng, nwlat, selng, selat, key)
 }
@@ -24,7 +24,7 @@ A data frame with sensor_index, date_created, last_seen, name,
 }
 \description{
 Get all of the PurpleAir sensor indices within a bounding box. See
-https://api.purpleair.com/#api-sensors-get-sensors-data
+https://api.purpleair.com/#api-sensors-get-sensors-data. Includes indoor and outdoor
 }
 \examples{
 # CA Bounding Box

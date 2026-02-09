@@ -3,6 +3,18 @@
 # However, we still use AirMonitor for the full list of temporary monitors that may not be
 # in airnow.
 
+#' Title
+#'
+#' @param date 
+#' @param states 
+#' @param timezone 
+#' @param output_path 
+#' @param crs 
+#'
+#' @returns
+#' @export
+#'
+#' @examples
 temp_monitors_acquire <- function(date, states = NULL, timezone = "America/Los_Angeles",
                                   output_path = "./processed_data/temp_monitors/",
                                   crs = "EPSG:3395") {

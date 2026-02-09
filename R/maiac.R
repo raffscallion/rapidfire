@@ -73,7 +73,7 @@ maiac_acquire <- function(dt, user = NULL, password = NULL, outpath = "./raw_dat
   }
   
   urls <- df$href
-  
+
   # skip any files we already have
   write_new_raster <- purrr::possibly(terra::writeRaster, otherwise = NULL)
   safe_download <- purrr::safely(terra::rast)
@@ -90,7 +90,7 @@ maiac_acquire <- function(dt, user = NULL, password = NULL, outpath = "./raw_dat
       outfile <- fs::path_join(c(outpath, fname))
       write_new_raster(raster, outfile)
     } else {
-      outfile <- results$error
+      outfile <- results$error$message
     }
     return(outfile)    
   }
@@ -101,6 +101,17 @@ maiac_acquire <- function(dt, user = NULL, password = NULL, outpath = "./raw_dat
 }
 
 # Merge tiles and fill gaps. We keep in native projection to preserve info.
+#' Title
+#'
+#' @param dt 
+#' @param input_path 
+#' @param output_path 
+#' @param overwrite 
+#'
+#' @returns
+#' @export
+#'
+#' @examples
 maiac_preprocess <- function(dt, input_path = "./raw_data/MAIAC/", 
                              output_path = "./processed_data/MAIAC/",
                              overwrite = FALSE) {

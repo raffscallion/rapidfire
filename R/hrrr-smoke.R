@@ -1,5 +1,18 @@
 # Functions for dealing with HRRR-smoke data
 
+#' Title
+#'
+#' @param date 
+#' @param outpath 
+#' @param extent_grid 
+#' @param tz 
+#' @param crs 
+#' @param delete_files 
+#'
+#' @returns
+#' @export
+#'
+#' @examples
 hrrr_acquire <- function(date, outpath, extent_grid,
                                    tz = "America/Los_Angeles",
                                    crs = "EPSG:3395",

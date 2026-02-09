@@ -1,6 +1,17 @@
 # Use an existing developed model to predict values at given new locations and dates
 
 # Predict a single day across an output grid
+#' Title
+#'
+#' @param dt 
+#' @param grid_file 
+#' @param model_file 
+#' @param paths 
+#'
+#' @returns
+#' @export
+#'
+#' @examples
 predict_grid <- function(dt, grid_file, model_file, paths) {
   
   # Load template grid
