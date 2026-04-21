@@ -19,7 +19,7 @@
 monitors_combine <- function(date, input_path_airnow, input_path_temp_monitors, 
                              output_path = "./processed_data/monitors/",
                              extent = NULL) {
-  
+
   dt <- as.Date(date)
   airnow_filename <- paste0("airnow_pm25_24hr_", strftime(dt, "%Y-%m-%d"), ".RDS")
   an <- terra::readRDS(fs::path_join(c(input_path_airnow, airnow_filename)))
@@ -27,8 +27,10 @@ monitors_combine <- function(date, input_path_airnow, input_path_temp_monitors,
   
   tempm_filename <- paste0("temp_monitors_pm25_24hr_", strftime(dt, "%Y-%m-%d"), ".RDS")
   tempm <- terra::readRDS(fs::path_join(c(input_path_temp_monitors, tempm_filename)))
-  tempm$source <- "airsis_wrcc"
-
+  if (!is.null(tempm)) {
+    tempm$source <- "airsis_wrcc"  
+  }
+  
   mon <- rbind(an, tempm)
   
   # If wanted, limit to monitors within the provided extent, which is a SpatVector or SpatExtent
