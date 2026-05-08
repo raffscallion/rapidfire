@@ -10,8 +10,14 @@ pa_check_api_key(key)
 \item{key}{A PurpleAir API key}
 }
 \value{
-The type of API key. Either "READ" or "WRITE"
+A string indicating the key type: \code{"READ"} or \code{"WRITE"}.
+  Stops with an error message if the key is invalid.
 }
 \description{
 Check that your PurpleAir API key is working and that it is the correct type
+}
+\examples{
+\dontrun{
+pa_check_api_key(Sys.getenv("PURPLEAIR_READ_KEY"))
+}
 }

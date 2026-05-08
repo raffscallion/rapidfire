@@ -1,277 +1,198 @@
-# Automation functions (scripts) for developing models over a given period using
-# the standard stuff (AirNow/AirSis, PurpleAir, MAIAC AOD, BlueSky, NARR)
+# New functions for developing models
 
-#' develop_model
+# Start with daily processed data on disk
+
+#' Develop a random forest model for PM2.5 estimation
 #'
-#' Specify start and end dates, and states to train a model. Note that this
-#' function requires MAIAC and NARR data be downloaded already. See
-#' \code{\link{maiac_download}} and \code{\link{get_narr}}.
+#' Trains a random forest model for estimating surface-level PM2.5 over a date range using
+#' preprocessed inputs from regulatory and temporary monitors, PurpleAir sensors, HRRR
+#' meteorology, and MAIAC AOD. Monitors are split into training and test sets; kriged
+#' estimates from the training monitors and PurpleAir sensors are computed at the test
+#' locations along with co-located HRRR and MAIAC values. A random forest is then trained
+#' using 10-fold cross-validation with \code{mtry} tuning. The function returns the fitted
+#' model and variogram models needed for prediction and validation.
 #'
-#' @param dt1 date Start date of the model input data
-#' @param dt2 date End date of the model input data
-#' @param states character A vector of two-letter state abbreviations
-#' @param pa_cutoff numeric The distance in meters to consider PurpleAir data in
-#'   kriging. The default value is 100,000 m (100 km).
-#'   \code{\link{create_purpleair_variogram}}.
-#' @param seed numeric A number to set the randomization seed for
-#'   reproducibility
-#' @param bluesky_special character Handles two special cases of BlueSky data.
-#'   If "2020", processes data prior to October 10, 2020 separately from that
-#'   after, as the BlueSky data format changed. If "HAQAST", uses custom
-#'   BlueSky-CMAQ output created during the HAQAST campaign (see
-#'   \url{https://doi.org/10.1080/10962247.2021.1891994}{O'Neill et al., 2021}).
-#' @param pa_data character Path to an RDS file of pre-retrieved PurpleAir data
-#'   from \code{\link{get_purpleair_daterange}}.
+#' @param dt1 A \code{Date} or date-coercible character string giving the first day of the
+#'   training period (inclusive).
+#' @param dt2 A \code{Date} or date-coercible character string giving the last day of the
+#'   training period (inclusive).
+#' @param paths A named list of directory paths with the following elements:
+#'   \describe{
+#'     \item{monitors}{Directory containing combined monitor RDS files
+#'       (\code{monitors_combined_YYYY-MM-DD.RDS}).}
+#'     \item{purpleair}{Directory containing preprocessed PurpleAir RDS files.}
+#'     \item{hrrr}{Directory containing preprocessed HRRR GeoTIFF files.}
+#'     \item{maiac}{Directory containing preprocessed MAIAC GeoTIFF files.}
+#'   }
+#' @param test_extent An optional \code{SpatVector} or \code{SpatExtent} used to restrict
+#'   monitors to a specific region before model training. If \code{NULL}, all monitors are
+#'   used.
+#' @param pa_nmax Maximum number of nearest PurpleAir neighbors to use when kriging sensor
+#'   estimates to monitor locations. Default is \code{100}.
+#' @param seed Integer random seed for monitor splitting and model training. Default is
+#'   \code{1977}.
 #'
-#' @return A list with two items. model contains the model as returned by
-#'   \code{\link[caret]{train}}. output is a dataframe with the input data and
-#'   the modeled predictions.
+#' @returns A named list with three elements:
+#'   \describe{
+#'     \item{model}{The final fitted \code{randomForest} model object.}
+#'     \item{vgm_mon}{A pooled \code{variogramModel} fitted to regulatory monitor
+#'       data, for use in \code{\link{predict_grid}} and
+#'       \code{\link{daily_cross_validate}}.}
+#'     \item{vgm_pa}{A pooled \code{variogramModel} fitted to PurpleAir sensor
+#'       data, for use in \code{\link{predict_grid}} and
+#'       \code{\link{daily_cross_validate}}.}
+#'   }
 #' @export
 #'
-#' @examples dt1 <- as.Date("2018-11-01")
-#' dt2 <- as.Date("2018-11-30")
-#' pa <- "./data/purpleair/purpleair_2018.RDS"
-#' mod_2018_nov_<- develop_model(dt1, dt2, states = "CA", pa_data = pa)
-develop_model <- function(dt1, dt2, states, pa_cutoff = 100000, seed = 1977,
-                          bluesky_special = NULL, pa_data = NULL,
-                          bs_path = "./data/bluesky/archive/") {
-
-  # Get and prep AirNow and mobile monitor data
-  print("AirNow, AirSIS, and WRCC data...")
-  an_ws <- get_monitor_daterange(dt1, dt2, states, "airnow")
-  as_ws <- get_monitor_daterange(dt1, dt2, states, "airsis")
-  wr_ws <- get_monitor_daterange(dt1, dt2, states, "wrcc")
-  mon <- do.call(rbind, c(an_ws, as_ws, wr_ws))
-
-  an_vg <- create_airnow_variograms(mon)
-  # trying a larger fraction of test data to make a more complete RF model
-  mon_split <- split_airnow_data(mon, test_fraction = 0.3)
-  an_ok <- krige_airnow(mon_split, an_vg)
-
-  ank_complete <- krige_airnow_all(mon, mon, an_vg) %>%
-    select(monitorID, Day, PM25_log_ANK, PM25_log_var) %>%
-    distinct()
-
-  # Prep Bluesky For 2020, the grid changed midway through october - will need
-  # to process them separately. I added this hack to address it
-  print("BlueSky data...")
-  if (!is.null(bluesky_special)) {
-    if (bluesky_special == "2020") {
-      bluesky_stack1 <- stack_bluesky_archive(dt1, as.Date("2020-10-09"))
-      bluesky_stack2 <- stack_bluesky_archive(as.Date("2020-10-10"), dt2)
-      mon1 <- mon[mon@data$Day <= as.POSIXct("2020-10-09"),]
-      mon2 <- mon[mon@data$Day > as.POSIXct("2020-10-09"),]
-      bluesky1 <- preprocessed_bluesky_at_airnow(bluesky_stack1, mon1)
-      bluesky2 <- preprocessed_bluesky_at_airnow(bluesky_stack2, mon2)
-      bluesky <- bind_rows(bluesky1, bluesky2)
-    } else if (bluesky_special == "HAQAST") {
-      #Use the HAQAST S1 CMAQ run instead of the standard Bluesky archive
-      bluesky_stack <- stack_haqast_archive(dt1, dt2)
-      bluesky <- preprocessed_bluesky_at_airnow(bluesky_stack, mon)
-    } else {
-      stop(paste("bluesky_special:", period, "not supported"))
-    }
-  } else {
-    bluesky_stack <- stack_bluesky_archive(dt1, dt2, path = bs_path)
-    bluesky <- preprocessed_bluesky_at_airnow(bluesky_stack, mon)
-  }
-
-  # Prep MAIAC AOD
-  print("Preparing MAIAC...")
-  maiac <- maiac_at_airnow(mon)
-
-  # Prep NARR
-  print("Preparing NARR...")
-  narr <- narr_at_airnow(mon)
-
-  # Get and prep PurpleAir data For dates prior to April 5, 2019, the data must
-  # be acquired by create_purpleair_archive before running this script
-  print("PurpleAir data...")
-  if (is.null(pa_data)) {
-    pa_data <- get_purpleair_daterange(dt1, dt2, states)
-  } else {
-    pa_data <- readRDS(pa_data) %>%
-      filter(Date >= dt1,
-             Date <=dt2)
-  }
-  pas <- purpleair_spatial(pa_data)
-  pa_clean <- purpleair_clean_spatial_outliers(pas)
-  pa_vg <- create_purpleair_variograms(pa_clean, cutoff = pa_cutoff)
-
-  # Krige purple air data for all locations in the monitor data set
-  pa_ok <- krige_purpleair(pa_clean, mon, pa_vg)
-
-  # Now need to put altogether in prep for RF modeling
-  print("Combining inputs for modeling...")
-  train <- mon_split$train@data %>%
-    mutate(Split = "Train")
-  test <- mon_split$test@data %>%
-    mutate(Split = "Test")
-
-  # These have the measured PM25 - the target variable
-  model_in <- bind_rows(train, test)
-
-  # All the inputs
-  # AirNow Kriged
-  ank_in <- an_ok@data %>%
-    select(monitorID, Day, PM25_log_ANK = var1.pred)
-  # PurpleAir Kriged
-  pak_in <- pa_ok@data %>%
-    select(monitorID, Day, PM25_log_PAK = purp.pred)
-  # NARR
-  narr_in <- narr %>%
-    select(-PM25, -Hours, -PM25_log)
-  # Bluesky
-  bluesky_in <- bluesky %>%
-    select(monitorID, Day, PM25_bluesky)
-  # MAIAC AOD
-  maiac_in <- maiac %>%
-    select(monitorID, Day, MAIAC_AOD)
-
-  model_in <- model_in %>%
-    left_join(ank_in, by = c("monitorID", "Day")) %>%
-    left_join(pak_in, by = c("monitorID", "Day")) %>%
-    left_join(narr_in, by = c("monitorID", "Day")) %>%
-    left_join(bluesky_in, by = c("monitorID", "Day")) %>%
-    left_join(maiac_in, by = c("monitorID", "Day"))
-
-  # Check for missing values
-  model_in <- model_in %>%
-    filter(!is.na(PM25_bluesky))
-
-  # Replace missing and non-finite values with overall median
-  model_in <- model_in %>%
-    mutate(across(PM25_log_PAK:MAIAC_AOD,
-                  ~if_else(is.finite(.x), .x, median(.x, na.rm = TRUE))))
-
-  # Train the model
-  set.seed(seed)
-  train_control <- caret::trainControl(method = "cv", number = 10)
-  tune_grid <- data.frame(mtry = c(2,3,4,5))
-
-  model_in_test <- filter(model_in, Split == "Test") %>%
-    filter(!is.na(PM25_log_ANK))
-
-  model <- caret::train(PM25_log ~ PM25_log_ANK + PM25_log_PAK + PM25_bluesky + MAIAC_AOD +
-                          air.2m + uwnd.10m + vwnd.10m + rhum.2m + apcp + hpbl,
-                          data = model_in_test, tuneGrid = tune_grid, do.trace = 100,
-                          ntree = 500, trControl = train_control, method = "rf",
-                          importance = TRUE)
-
-  print(model)
-
-  # Now, krige all the monitor sites and make a prediction at each. Then return
-  # both the model and the data frame including the inputs and prediction.
-  output <- bind_rows(train, test) %>%
-    left_join(ank_complete, by = c("monitorID", "Day")) %>%
-    left_join(pak_in, by = c("monitorID", "Day")) %>%
-    left_join(narr_in, by = c("monitorID", "Day")) %>%
-    left_join(bluesky_in, by = c("monitorID", "Day")) %>%
-    left_join(maiac_in, by = c("monitorID", "Day")) %>%
-    filter(!is.na(PM25_bluesky)) %>%
-    filter(if_all(where(is.numeric), is.finite))
-
-  output$PM25_log_RF <- predict(model$finalModel, output)
-  list(model = model, output=output)
-
-}
-
-# New version substituting HRRR-smoke for both NARR and BlueSky
-#' Title
-#'
-#' @param dt1 
-#' @param dt2 
-#' @param states 
-#' @param pa_cutoff 
-#' @param seed 
-#' @param pa_data 
-#' @param maiac_path 
-#'
-#' @returns
-#' @export
+#' @seealso \code{\link{predict_grid}}, \code{\link{daily_cross_validate}},
+#'   \code{\link{monitors_variogram_pooled}}, \code{\link{monitors_split}}
 #'
 #' @examples
-develop_model_h <- function(dt1, dt2, states, pa_cutoff = 100000, seed = 1977,
-                          pa_data = NULL, maiac_path = "./data/MAIAC/C61/",
-                          hrrr_path = "./data/hrrr/processed/") {
+#' \dontrun{
+#' model_list <- develop_model(
+#'   dt1 = "2024-10-01",
+#'   dt2 = "2024-11-30",
+#'   paths = list(
+#'     monitors  = "./processed_data/monitors/",
+#'     purpleair = "./processed_data/purpleair/",
+#'     hrrr      = "./processed_data/HRRR/",
+#'     maiac     = "./processed_data/MAIAC/"
+#'   )
+#' )
+#' saveRDS(model_list, "./models/rapidfire_model.RDS")
+#' }
+develop_model <- function(dt1, dt2, paths, test_extent = NULL, pa_nmax = 100, seed = 1977) {
   
-  # Get and prep AirNow and mobile monitor data
-  print("AirNow, AirSIS, and WRCC data...")
-  an_ws <- get_monitor_daterange(dt1, dt2, states, "airnow")
-  as_ws <- get_monitor_daterange(dt1, dt2, states, "airsis")
-  wr_ws <- get_monitor_daterange(dt1, dt2, states, "wrcc")
-  mon <- do.call(rbind, c(an_ws, as_ws, wr_ws))
-
-  an_vg <- create_airnow_variograms(mon)
-  # trying a larger fraction of test data to make a more complete RF model
-  mon_split <- split_airnow_data(mon, test_fraction = 0.3)
-  an_ok <- krige_airnow(mon_split, an_vg)
+  dates <- seq.Date(as.Date(dt1), as.Date(dt2), by = "1 day")
   
-  ank_complete <- krige_airnow_all(mon, mon, an_vg) %>%
-    select(monitorID, Day, PM25_log_ANK, PM25_log_var) %>%
-    distinct()
-
-  # Prep HRRR-smoke
-  hrrr <- hrrr_at_sites(mon, input_path = hrrr_path)
-
-  # Prep MAIAC AOD
-  print("Preparing MAIAC...")
-  maiac <- maiac_at_airnow(mon, maiac_path = maiac_path)
-     
-  # Get and prep PurpleAir data For dates prior to April 5, 2019, the data must
-  # be acquired by create_purpleair_archive before running this script
-  print("PurpleAir data...")
-  if (is.null(pa_data)) {
-    stop("PurpleAir data must be provided and will not be acquired at runtime")
-  } else {
-    pa_data <- readRDS(pa_data) %>%
-      filter(Date >= dt1,
-             Date <=dt2)
+  
+  # load monitoring data
+  load_monitoring <- function(dt) {
+    monitoring_file <- fs::path_join(c(paths[["monitors"]], 
+                                       paste0("monitors_combined_",
+                                              strftime(dt, "%Y-%m-%d"),
+                                              ".RDS")))
+    mon <- terra::readRDS(monitoring_file)
   }
-  pas <- purpleair_spatial(pa_data)
-  pa_clean <- purpleair_clean_spatial_outliers(pas)
-  pa_vg <- create_purpleair_variograms(pa_clean, cutoff = pa_cutoff)
+  mons <- purrr::map(dates, load_monitoring)  
+  mon <- do.call(rbind, mons)
   
-  # Krige purple air data for all locations in the monitor data set
-  pa_ok <- krige_purpleair(pa_clean, mon, pa_vg)
-  
-  # Now need to put altogether in prep for RF modeling
-  print("Combining inputs for modeling...")
-  train <- mon_split$train@data %>%
-    mutate(Split = "Train")
-  test <- mon_split$test@data %>%
-    mutate(Split = "Test")
-  
-  # These have the measured PM25 - the target variable
-  model_in <- bind_rows(train, test)
-  
-  # All the inputs
-  # AirNow Kriged
-  ank_in <- an_ok@data %>%
-    select(monitorID, Day, PM25_log_ANK = var1.pred)
-  # PurpleAir Kriged
-  pak_in <- pa_ok@data %>%
-    select(monitorID, Day, PM25_log_PAK = purp.pred)
-  # HRRR
-  hrrr_in <- hrrr %>%
-    select(-PM25, -Hours, -PM25_log)
-  # MAIAC AOD
-  maiac_in <- maiac %>%
-    select(monitorID, Day, MAIAC_AOD)
-  
-  model_in <- model_in %>%
-    left_join(ank_in, by = c("monitorID", "Day")) %>%
-    left_join(pak_in, by = c("monitorID", "Day")) %>%
-    left_join(hrrr_in, by = c("monitorID", "Day")) %>%
-    left_join(maiac_in, by = c("monitorID", "Day"))
-  
-  # # Check for missing values
-  # model_in <- model_in %>%
-  #   filter(!is.na(PM25_bluesky))
+  # Remove any sites outside of the test extent (e.g., California)
+  if (!is.null(test_extent)) {
+    crs <- terra::crs(mon)
+    test_extent <- terra::project(test_extent, crs)
+    mon <- terra::intersect(mon, test_extent)
+  }
 
-  # Replace missing and non-finite values with overall median
-  model_in <- model_in %>%
-    mutate(across(PM25_log_PAK:MAIAC_AOD,
+  # Remove any non-finite values
+  mon <- mon[is.finite(mon$PM25_log),]
+  
+  # Try a pooled variogram using all data
+  vgm <- monitors_variogram_pooled(mon)
+  
+  # Split to test and training
+  mon_split <- monitors_split(mon, test_fraction = 0.3, seed = seed)
+
+  # Get the daily interpolated monitor values at the test locations using the train locations
+  daily_interpolation <- function(dt, train_locs, test_locs, vgm, nmax) {
+    test <- test_locs[test_locs$Day == dt,]
+    train <- train_locs[train_locs$Day == dt,]
+    res <- monitors_krige_points(train, test, vgm, nmax = nmax)
+    coords <- sf::st_coordinates(res)
+    res <- res |>
+      mutate(Day = dt,
+             x = coords[,1],
+             y = coords[,2]) |>
+      sf::st_drop_geometry()
+      
+  }
+  dates <- unique(mon_split$test$Day)
+  mon_krig <- purrr::map(dates, \(x) daily_interpolation(x, mon_split$train, 
+                                                         mon_split$test, vgm, nmax = 50)) |>
+    purrr::list_rbind() |>
+    rename(PM25_log_ANK=var1.pred) |>
+    select(-var1.var)
+
+  # Load purpleair sensor data
+  load_sensors <- function(dt) {
+    pa_file <- fs::path_join(c(paths[["purpleair"]],
+                               paste0("purpleair_processed_",
+                                      strftime(dt, "%Y-%m-%d"),
+                                      ".RDS")))
+    pa <- terra::readRDS(pa_file)
+    pa$Day <- dt
+    pa
+  }
+  pas <- purrr::map(dates, load_sensors)
+  pa <- do.call(rbind, pas)
+  
+  # remove any non-finite values
+  pa <- pa[is.finite(pa$PM25_log),]
+  
+  # Create a pooled variogram for sensors
+  vgm_pa <- monitors_variogram_pooled(pa)
+  
+  # get daily interpolated sensor values at the test locations
+  pa_krig <- purrr::map(dates, \(x) daily_interpolation(x, pa, mon_split$test, vgm_pa,
+                                                        nmax = pa_nmax)) |>
+    purrr::list_rbind() |>
+    rename(PM25_log_PAK=var1.pred) |>
+    select(-var1.var)
+
+  # load HRRR, get values at test locations, and log-transform MASSDEN
+  load_hrrr <- function(dt, test_locs) {
+    hrrr <- hrrr_stack(dt, paths[["hrrr"]])
+    test <- test_locs[test_locs$Day == dt,]
+    coords <- terra::crds(test)
+    extracted <- terra::extract(hrrr, test)
+    extracted <- extracted |>
+      mutate(Day = dt,
+             MASSDEN_log = log(MASSDEN),
+             x = coords[,1],
+             y = coords[,2]) |>
+      select(-ID)
+    
+  }
+  hrrr <- purrr::map(dates, \(x) load_hrrr(x, mon_split$test)) |>
+    purrr::list_rbind()
+
+  # Load MAIAC and get values at test locations
+  load_maiac <- function(dt, test_locs) {
+    maiac_file <- fs::path_join(c(paths[["maiac"]],
+                                  paste0("MAIAC_processed_", strftime(dt, "%Y-%m-%d"), ".tif")))
+    maiac <- terra::rast(maiac_file)
+    maiac <- terra::project(maiac, terra::crs(test_locs))
+    test <- test_locs[test_locs$Day == dt,]
+    coords <- terra::crds(test)
+    extracted <- terra::extract(maiac, test)
+    extracted <- extracted |>
+      mutate(Day = dt,
+             x = coords[,1],
+             y = coords[,2]) |>
+      select(-ID)
+  }
+  maiac <- purrr::map(dates, \(x) load_maiac(x, mon_split$test)) |>
+    purrr::list_rbind()
+  
+  # Combine all data at test locations
+  model_inputs <- mon_krig |>
+    full_join(pa_krig, by = c("x", "y", "Day")) |>
+    full_join(hrrr, by = c("x", "y", "Day")) |>
+    full_join(maiac, by = c("x", "y", "Day"))
+  
+  # Join with actual monitored PM2.5
+  m_coords <- terra::crds(mon_split$test)
+  m <- as.data.frame(mon_split$test) |>
+    select(monitorID, Day, PM25_log) |>
+    mutate(x = m_coords[,1],
+           y = m_coords[,2])
+  
+  final_input <- m |>
+    full_join(model_inputs, by = c("x", "y", "Day"))
+  
+  # Replace any missing and non-finite values with overall median
+  final_input <- final_input %>%
+    mutate(across(PM25_log:MAIAC_AOD,
                   ~if_else(is.finite(.x), .x, median(.x, na.rm = TRUE))))
   
   # Train the model
@@ -279,28 +200,13 @@ develop_model_h <- function(dt1, dt2, states, pa_cutoff = 100000, seed = 1977,
   train_control <- caret::trainControl(method = "cv", number = 10)
   tune_grid <- data.frame(mtry = c(2,3,4,5))
   
-  model_in_test <- filter(model_in, Split == "Test") %>%
-    filter(!is.na(PM25_log_ANK))
-  
   model <- caret::train(PM25_log ~ PM25_log_ANK + PM25_log_PAK + MAIAC_AOD +
-                          HPBL + RH + UGRD + VGRD + TMP + MASSDEN,
-                        data = model_in_test, tuneGrid = tune_grid, do.trace = 100,
+                          HPBL + RH + UGRD + VGRD + TMP + MASSDEN_log + APCP,
+                        data = final_input, tuneGrid = tune_grid, do.trace = 100,
                         ntree = 500, trControl = train_control, method = "rf",
                         importance = TRUE)
   
   print(model)
-  
-  # Now, krige all the monitor sites and make a prediction at each. Then return
-  # both the model and the data frame including the inputs and prediction.
-  output <- bind_rows(train, test) %>%
-    left_join(ank_complete, by = c("monitorID", "Day")) %>%
-    left_join(pak_in, by = c("monitorID", "Day")) %>%
-    left_join(hrrr_in, by = c("monitorID", "Day")) %>%
-    left_join(maiac_in, by = c("monitorID", "Day")) %>%
-    filter(if_all(where(is.numeric), is.finite))
-  
-  output$PM25_log_RF <- predict(model$finalModel, output)
-  list(model = model, output=output)
+  list(model = model$finalModel, vgm_mon = vgm, vgm_pa = vgm_pa)
   
 }
-

@@ -2,55 +2,73 @@
 % Please edit documentation in R/develop.R
 \name{develop_model}
 \alias{develop_model}
-\title{develop_model}
+\title{Develop a random forest model for PM2.5 estimation}
 \usage{
-develop_model(
-  dt1,
-  dt2,
-  states,
-  pa_cutoff = 1e+05,
-  seed = 1977,
-  bluesky_special = NULL,
-  pa_data = NULL,
-  bs_path = "./data/bluesky/archive/"
-)
+develop_model(dt1, dt2, paths, test_extent = NULL, pa_nmax = 100, seed = 1977)
 }
 \arguments{
-\item{dt1}{date Start date of the model input data}
+\item{dt1}{A \code{Date} or date-coercible character string giving the first day of the
+training period (inclusive).}
 
-\item{dt2}{date End date of the model input data}
+\item{dt2}{A \code{Date} or date-coercible character string giving the last day of the
+training period (inclusive).}
 
-\item{states}{character A vector of two-letter state abbreviations}
+\item{paths}{A named list of directory paths with the following elements:
+\describe{
+  \item{monitors}{Directory containing combined monitor RDS files
+    (\code{monitors_combined_YYYY-MM-DD.RDS}).}
+  \item{purpleair}{Directory containing preprocessed PurpleAir RDS files.}
+  \item{hrrr}{Directory containing preprocessed HRRR GeoTIFF files.}
+  \item{maiac}{Directory containing preprocessed MAIAC GeoTIFF files.}
+}}
 
-\item{pa_cutoff}{numeric The distance in meters to consider PurpleAir data in
-kriging. The default value is 100,000 m (100 km).
-\code{\link{create_purpleair_variogram}}.}
+\item{test_extent}{An optional \code{SpatVector} or \code{SpatExtent} used to restrict
+monitors to a specific region before model training. If \code{NULL}, all monitors are
+used.}
 
-\item{seed}{numeric A number to set the randomization seed for
-reproducibility}
+\item{pa_nmax}{Maximum number of nearest PurpleAir neighbors to use when kriging sensor
+estimates to monitor locations. Default is \code{100}.}
 
-\item{bluesky_special}{character Handles two special cases of BlueSky data.
-If "2020", processes data prior to October 10, 2020 separately from that
-after, as the BlueSky data format changed. If "HAQAST", uses custom
-BlueSky-CMAQ output created during the HAQAST campaign (see
-\url{https://doi.org/10.1080/10962247.2021.1891994}{O'Neill et al., 2021}).}
-
-\item{pa_data}{character Path to an RDS file of pre-retrieved PurpleAir data
-from \code{\link{get_purpleair_daterange}}.}
+\item{seed}{Integer random seed for monitor splitting and model training. Default is
+\code{1977}.}
 }
 \value{
-A list with two items. model contains the model as returned by
-  \code{\link[caret]{train}}. output is a dataframe with the input data and
-  the modeled predictions.
+A named list with three elements:
+  \describe{
+    \item{model}{The final fitted \code{randomForest} model object.}
+    \item{vgm_mon}{A pooled \code{variogramModel} fitted to regulatory monitor
+      data, for use in \code{\link{predict_grid}} and
+      \code{\link{daily_cross_validate}}.}
+    \item{vgm_pa}{A pooled \code{variogramModel} fitted to PurpleAir sensor
+      data, for use in \code{\link{predict_grid}} and
+      \code{\link{daily_cross_validate}}.}
+  }
 }
 \description{
-Specify start and end dates, and states to train a model. Note that this
-function requires MAIAC and NARR data be downloaded already. See
-\code{\link{maiac_download}} and \code{\link{get_narr}}.
+Trains a random forest model for estimating surface-level PM2.5 over a date range using
+preprocessed inputs from regulatory and temporary monitors, PurpleAir sensors, HRRR
+meteorology, and MAIAC AOD. Monitors are split into training and test sets; kriged
+estimates from the training monitors and PurpleAir sensors are computed at the test
+locations along with co-located HRRR and MAIAC values. A random forest is then trained
+using 10-fold cross-validation with \code{mtry} tuning. The function returns the fitted
+model and variogram models needed for prediction and validation.
 }
 \examples{
-dt1 <- as.Date("2018-11-01")
-dt2 <- as.Date("2018-11-30")
-pa <- "./data/purpleair/purpleair_2018.RDS"
-mod_2018_nov_<- develop_model(dt1, dt2, states = "CA", pa_data = pa)
+\dontrun{
+model_list <- develop_model(
+  dt1 = "2024-10-01",
+  dt2 = "2024-11-30",
+  paths = list(
+    monitors  = "./processed_data/monitors/",
+    purpleair = "./processed_data/purpleair/",
+    hrrr      = "./processed_data/HRRR/",
+    maiac     = "./processed_data/MAIAC/"
+  )
+)
+saveRDS(model_list, "./models/rapidfire_model.RDS")
+}
+}
+\seealso{
+\code{\link{predict_grid}}, \code{\link{daily_cross_validate}},
+  \code{\link{monitors_variogram_pooled}}, \code{\link{monitors_split}}
 }

@@ -1,25 +1,22 @@
 Package: rapidfire
 Type: Package
 Title: relatively accurate particulate information derived from inputs retrieved easily
-Version: 1.2.6
+Version: 2.0.1
 Author: Sean Raffuse
 Maintainer: Sean Raffuse <sraffuse@ucdavis.edu>
 Description: Tools for acquiring input data, developing regression models, and using those models to estimate surface level PM2.5 concentrations, especially during wildfire smoke episodes.
 License: GPL (>= 3)
 Encoding: UTF-8
 LazyData: true
-RoxygenNote: 7.3.2
+RoxygenNote: 7.3.3
 Imports:
     fs,
     dplyr,
     purrr,
-    ncdf4,
     sf,
-    raster,
     sp,
     randomForest,
     caret,
-    rvest,
     httr,
     terra,
     stringr,
@@ -28,7 +25,15 @@ Imports:
     gstat,
     jsonlite,
     magrittr,
-    AirMonitor
+    AirMonitor,
+    earthdatalogin,
+    DBI,
+    duckdb,
+    glue,
+    readr,
+    RCurl
 Suggests:
   ggplot2,
-  Reanalysis
+  scales,
+  colorspace,
+  tidyterra

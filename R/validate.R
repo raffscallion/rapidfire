@@ -1,119 +1,153 @@
-# Validate developed models with some hand-built cross validation
 
-# Gather all AirNow and AirSIS data for a date range and area and split into k
-# folds. For each fold, use the remaining data to predict the values. Then,
-# collect and summarize.
+#' Leave-one-out cross-validation of daily PM2.5 predictions
 #'
+#' Evaluates model performance for a single day using leave-one-out cross-validation
+#' across all regulatory monitors. For each monitor, its observation is withheld and
+#' kriging is used to interpolate a PM2.5 estimate at that location from the remaining
+#' monitors. Predictor variables (HRRR meteorology, MAIAC AOD, kriged PurpleAir) are
+#' then extracted at each monitor location and fed into the pre-trained random forest
+#' model to generate a final PM2.5 prediction. Results are saved as a CSV.
 #'
-#' @param dt1 date Start date of the model input data
-#' @param dt2 date End date of the model input data
-#' @param states character A vector of two-letter state abbreviations
-#' @param k numeric Number of folds to split into (default is 10)
-#' @param pa_data Optional PurpleAir data in pas-like format. If not provided, a
-#'   download will be attempted.
-#' @param model Path to a final model object in RDS format, such as produced by
-#'   \code{\link{develop_model}}.
-#' @param pa_cutoff
+#' @param dt A \code{Date} or date-coercible character string specifying the day to
+#'   validate.
+#' @param model_file Path to an RDS file containing a named list with elements:
+#'   \describe{
+#'     \item{model}{A fitted random forest model (e.g., from \code{\link{develop_model}}).}
+#'     \item{vgm_mon}{A \code{variogramModel} for regulatory monitor kriging.}
+#'     \item{vgm_pa}{A \code{variogramModel} for PurpleAir sensor kriging.}
+#'   }
+#' @param paths A named list of directory paths with the following elements:
+#'   \describe{
+#'     \item{monitors}{Directory containing combined monitor RDS files
+#'       (\code{monitors_combined_YYYY-MM-DD.RDS}).}
+#'     \item{hrrr}{Directory containing preprocessed HRRR GeoTIFF files.}
+#'     \item{maiac}{Directory containing preprocessed MAIAC GeoTIFF files.}
+#'     \item{purpleair}{Directory containing preprocessed PurpleAir RDS files.}
+#'     \item{cross_validation}{Directory where the output CSV will be saved.}
+#'   }
 #'
-#' @return
+#' @returns A data frame with one row per monitor containing:
+#'   \describe{
+#'     \item{monitorID}{Monitor identifier.}
+#'     \item{PM25_log}{Observed log-transformed PM2.5.}
+#'     \item{PM25_log_ANK}{Leave-one-out kriged estimate from regulatory monitors.}
+#'     \item{PM25_log_PAK}{Kriged estimate from PurpleAir sensors.}
+#'     \item{MAIAC_AOD}{MAIAC aerosol optical depth extracted at the monitor.}
+#'     \item{HPBL, RH, UGRD, VGRD, TMP, MASSDEN_log, APCP}{HRRR meteorological
+#'       variables extracted at the monitor.}
+#'     \item{PM25_log_RF}{Random forest PM2.5 prediction.}
+#'   }
+#'   The data frame is also written to \code{paths[["cross_validation"]]} as
+#'   \code{rapidfire_l-o-o_YYYY-MM-DD.csv}.
 #' @export
 #'
+#' @seealso \code{\link{monitors_krige_points}}, \code{\link{hrrr_stack}}
+#'
 #' @examples
-validate <- function(dt1, dt2, states = "CA", k = 10, pa_data = NULL,
-                     model, pa_cutoff = 100000) {
-
-  # Extract the model
-  mod <- readRDS(model)
-  mod <- mod$model$finalModel
+#' \dontrun{
+#' results <- daily_cross_validate(
+#'   dt = "2024-11-15",
+#'   model_file = "./models/rapidfire_model.RDS",
+#'   paths = list(
+#'     monitors       = "./processed_data/monitors/",
+#'     hrrr           = "./processed_data/HRRR/",
+#'     maiac          = "./processed_data/MAIAC/",
+#'     purpleair      = "./processed_data/purpleair/",
+#'     cross_validation = "./output/cross_validation/"
+#'   )
+#' )
+#' }
+daily_cross_validate <- function(dt, model_file, paths) {
   
-  # Get and prep AirNow and mobile monitor data
-  print("AirNow, AirSIS, and WRCC data...")
-  an_ws <- get_monitor_daterange(dt1, dt2, states, "airnow")
-  as_ws <- get_monitor_daterange(dt1, dt2, states, "airsis")
-  wr_ws <- get_monitor_daterange(dt1, dt2, states, "wrcc")
-  mon <- do.call(rbind, c(an_ws, as_ws, wr_ws))
+  # load monitoring data
+  monitoring_file <- fs::path_join(c(paths[["monitors"]], 
+                                     paste0("monitors_combined_",
+                                            strftime(dt, "%Y-%m-%d"),
+                                            ".RDS")))
+  mon <- terra::readRDS(monitoring_file)
 
-  an_vg <- create_airnow_variograms(mon)
-
-  # Get and prep all of the necessary data once
-  print("BlueSky data...")
-  bluesky <- bluesky_archive_at_locs(mon)
-
-  # Prep MAIAC AOD
-  print("Preparing MAIAC...")
-  maiac <- maiac_at_airnow(mon)
-
-  # Prep NARR
-  print("Preparing NARR...")
-  narr <- narr_at_airnow(mon)
-
-  # PurpleAir
-  print("Collecting PurpleAir...")
-  if (is.null(pa_data)) {
-    pa_data <- get_purpleair_daterange(dt1, dt2, states)
-  } else {
-    pa_data <- readRDS(pa_data) %>%
-      filter(Date >= dt1,
-             Date <=dt2)
+  # Remove any non-finite values
+  mon <- mon[is.finite(mon$PM25_log),]
+  
+  # For each site, interpolate without it's data
+  ids <- mon$monitorID
+  
+    # load the variogram
+  models <- readRDS(model_file)
+  mon_vgm <- models$vgm_mon
+  
+  leave_out_interpolate <- function(id) {
+    
+    mon_sub <- mon[mon$monitorID != id,]
+    mon_one <- mon[mon$monitorID == id,]
+    loc <- terra::crds(mon_one)
+    
+    res <- monitors_krige_points(mon_sub, mon_one, mon_vgm)
+    df <- tibble(monitorID = id,
+                 PM25_log_ANK = res$var1.pred)
   }
-  pas <- purpleair_spatial(pa_data)
-  print("Cleaning PurpleAir spatial outliers...")
-  pa_clean <- purpleair_clean_spatial_outliers(pas)
-  pa_vg <- create_purpleair_variograms(pa_clean, cutoff = pa_cutoff)
-  pa_ok <- krige_purpleair_sitedates(pa_clean, mon, pa_vg)
+  
+  interpolated_monitors <- purrr::map(ids, leave_out_interpolate, 
+                                      .progress = "Leave-one-out interpolation") |>
+    purrr::list_rbind()
+  
+  # load met and smoke data from hrrr
+  hrrr <- hrrr_stack(dt, paths[["hrrr"]])
+  
+  # Convert MASSDEN to log scale
+  massdenlog <- log(hrrr$MASSDEN)
+  names(massdenlog) <- "MASSDEN_log"
+  hrrr <- terra::rast(list(massdenlog, hrrr))
+  hrrr <- terra::subset(hrrr, which(names(hrrr)=="MASSDEN"), negate = TRUE)
+  hrrr_extracted <- terra::extract(hrrr, mon)
+  
+  # load satellite data
+  maiac_file <- fs::path_join(c(paths[["maiac"]],
+                                paste0("MAIAC_processed_", strftime(dt, "%Y-%m-%d"), ".tif")))
+  maiac <- terra::rast(maiac_file)
+  
+  # Extract at monitor points
+  maiac_crs <- terra::crs(maiac)
+  mon_maiac <- terra::project(mon, maiac_crs)
+  maiac_extracted <- terra::extract(maiac, mon_maiac)
+  
+  # load sensor data
+  ### Sensor data will be coming from CDPH? Need non-cdph way as well
+  pa_file <- fs::path_join(c(paths[["purpleair"]],
+                             paste0("purpleair_processed_",
+                                    strftime(dt, "%Y-%m-%d"),
+                                    ".RDS")))
+  pa <- terra::readRDS(pa_file)
 
-  # Convert to monitoring data to data frame for sampling
-  df <- mon@data
-  df$lon <- mon@coords[,1]
-  df$lat <- mon@coords[,2]
+  # interpolate to monitor points
+  pa_vgm <- models$vgm_pa
+  pak <- monitors_krige_points(pa, mon, pa_vgm, nmax = 100)
 
-  # Randomize the order, then split into k groups
-  samples <- slice_sample(df, prop = 1) %>%
-    mutate(Row = row_number(),
-           Group = (Row %% k) + 1)
-  groups <- 1:k
-
-  predict_group <- function(g) {
-    # For each group, run the model
-    test <- filter(samples, Group == g)
-    train <- setdiff(samples, test)
-
-    sp::coordinates(train) <- ~lon+lat
-    sp::proj4string(train) <- sp::proj4string(mon)
-
-    sp::coordinates(test) <- ~lon+lat
-    sp::proj4string(test) <- sp::proj4string(train)
-
-    ank <- krige_airnow_sitedates(train, test, an_vg)
-
-    # All the inputs
-    # PurpleAir Kriged
-    pak_in <- pa_ok %>%
-      select(monitorID, Day, PM25_log_PAK)
-    # NARR
-    narr_in <- narr %>%
-      select(-one_of("PM25"), -one_of("Source"), -Hours, -PM25_log)
-    # Bluesky
-    bluesky_in <- bluesky %>%
-      select(monitorID, Day, PM25_bluesky)
-    # MAIAC AOD
-    maiac_in <- maiac %>%
-      select(monitorID, Day, MAIAC_AOD)
-
-    results <- ank %>%
-      left_join(pak_in, by = c("monitorID", "Day")) %>%
-      left_join(narr_in, by = c("monitorID", "Day")) %>%
-      left_join(bluesky_in, by = c("monitorID", "Day")) %>%
-      left_join(maiac_in, by = c("monitorID", "Day")) %>%
-      # Replace missing and non-finite values with overall median
-      mutate(across(where(is.numeric),
-                    ~ifelse(is.finite(.x), .x, median(.x, na.rm = TRUE))))
-
-    results$PM25_log_RF <- predict(mod, results)
-    results
-
-  }
-
-  purrr::map_dfr(groups, predict_group)
-
+  # Compile and predict
+  model_inputs <- as.data.frame(mon) |>
+    select(monitorID, Day, PM25_log, source) |>
+    left_join(interpolated_monitors, by = "monitorID")
+  model_inputs$PM25_log_PAK <- pak$var1.pred
+  model_inputs$MAIAC_AOD <- maiac_extracted$MAIAC_AOD
+  model_inputs <- model_inputs |>
+    bind_cols(select(hrrr_extracted, -ID))
+  
+  model_inputs <- model_inputs[complete.cases(model_inputs),]
+  
+  model <- models$model
+  pred <- predict(model, model_inputs)
+    
+  # combine with observed inputs and return
+  results <- model_inputs
+  results$PM25_log_RF <- pred
+  
+  # Export file
+  outfile <- fs::path_join(c(paths[["cross_validation"]], 
+                             paste0("rapidfire_l-o-o_", 
+                                    strftime(dt, format = "%Y-%m-%d"), ".csv")))
+  readr::write_csv(results, outfile)
+  
+  return(results)
 }
+
+

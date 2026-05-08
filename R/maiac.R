@@ -1,222 +1,257 @@
 
-# Data pool location for MAIAC MCD19A2
-# https://e4ftl01.cr.usgs.gov/MOTA/MCD19A2.006/
 
-
-# For a given bounding box, return the MODIS tiles needed for coverage using the
-# MODIS siusoidal grid. Definition found at
-# https://modis-land.gsfc.nasa.gov/pdf/sn_bound_10deg.txt
-modis_tile_pick <- function(llat, ulat, llon, rlon) {
-
-  grid <- read.table("./data/MAIAC/modis_grid/sn_bound_10deg.txt", header = TRUE,
-                   row.names = NULL, sep = "", skip = 6, nrow = 648)
-  # Get tile for each corner
-  ur <- grid %>%
-    filter(lon_min < rlon, lon_max > rlon,
-           lat_min < ulat, lat_max > ulat)
-  lr <- grid %>%
-    filter(lon_min < rlon, lon_max > rlon,
-           lat_min < llat, lat_max > llat)
-  ul <- grid %>%
-    filter(lon_min < llon, lon_max > llon,
-           lat_min < ulat, lat_max > ulat)
-  ll <- grid %>%
-    filter(lon_min < llon, lon_max > llon,
-           lat_min < llat, lat_max > llat)
-
-  all <- bind_rows(ur, lr, ul, ll) %>%
-    distinct()
-
-}
-
-#' maiac_download
+#' Download MAIAC AOD data from the NASA EarthData archive and save as GeoTIFF
 #'
-#' Download MAIAC collection 6.1 data from the USGS archive
+#' Queries the NASA CMR API for MAIAC AOD granules (MCD19A2 C6.1) intersecting a
+#' bounding box and date. If standard MAIAC data are not yet available, falls back to
+#' the Near Real-Time product (MCD19A2N C6.1NRT). Matching HDF granules are downloaded
+#' and written to disk as GeoTIFF files.
 #'
-#' @param dt Date to retrieve
-#' @param user Username NASA Earthdata
-#' @param password Password for NASA Earthdata
-#' @param outpath output path to write files
-#' @param tiles_needed specific MODIS tiles required for your domain. See
-#'   https://modis-land.gsfc.nasa.gov/pdf/sn_bound_10deg.txt
+#' @param dt A \code{Date} or date-coercible character string specifying the local day
+#'   to acquire.
+#' @param user NASA EarthData username. If \code{NULL}, uses credentials previously
+#'   configured by \code{earthdatalogin::edl_netrc}.
+#' @param password NASA EarthData password. If \code{NULL}, uses stored credentials.
+#' @param outpath Directory path where downloaded GeoTIFF files will be saved.
+#'   Default is \code{"./raw_data/MAIAC/"}.
+#' @param bounding_box A numeric vector of four coordinates
+#'   \code{c(xmin, ymin, xmax, ymax)} in WGS84 (EPSG:4326) defining the spatial
+#'   extent of the request. Default covers California.
+#' @param tz Time zone string for the requested location, used to convert \code{dt}
+#'   to UTC for the CMR query. Default is \code{"America/Los_Angeles"}.
 #'
-#' @return
+#' @returns A character vector of file paths for the downloaded GeoTIFF files.
+#'   Files that fail to download return an error message string in place of a path.
 #' @export
 #'
 #' @examples
-maiac_download <- function(dt, user, password, outpath = "./data/MAIAC/",
-                           tiles_needed = c("h08v04", "h08v05", "h09v04")) {
-
-  base_url <- "https://e4ftl01.cr.usgs.gov/MOTA/MCD19A2.061/"
-
+#' \dontrun{
+#' maiac_acquire(
+#'   "2025-09-05",
+#'   user = Sys.getenv("EARTHDATA_USER"),
+#'   password = Sys.getenv("EARTHDATA_PASSWORD")
+#' )
+#' }
+maiac_acquire <- function(dt, user = NULL, password = NULL, outpath = "./raw_data/MAIAC/",
+                          bounding_box = c(-124.5, 32.5, -114, 42.1),
+                          tz = "America/Los_Angeles") {
+  
+  # Construct date query based on time zone
+  date_local <- as.POSIXct(dt, tz = tz)
+  end_date_local <- date_local + lubridate::days(1)
+  
   # Date
-  dt_str <- strftime(dt, format = "%Y.%m.%d")
+  dt_str <- strftime(date_local, tz = "UTC", format = "%Y-%m-%dT%H:%M:%SZ")
+  end_dt_str <- strftime(end_date_local, tz = "UTC", format = "%Y-%m-%dT%H:%M:%SZ")
+  temporal_str <- paste(dt_str, end_dt_str, sep = ",")
+  
+  # Spatial query
+  bounding_box_str <- paste(bounding_box, collapse = ",")
+  
+  # set up credentials to EarthData archives
+  earthdatalogin::edl_netrc(username = user, password = password)
+  #earthdatalogin::edl_netrc()
+  
+  # First check for the regular MAIAC files (MCD19A2 C6.1). If those aren't ready yet,
+  # look for the NRT versions (MCD19A2N C6.1NRT)
+  concept_id <- "C2324689816-LPCLOUD"
+  
+  url <- paste0("https://cmr.earthdata.nasa.gov/search/granules.json?collection_concept_id=",
+                concept_id, "&temporal=", temporal_str, "&bounding_box=", bounding_box_str)
+  
+  result <- RCurl::getURL(url)
+  js <- jsonlite::fromJSON(result)
+  links <- js$feed$entry$links
+  
+  if (is.null(links)) {
+    warning("No MAIAC data found, looking for NRT version...")
+    
+    # Look for NRT data
+    concept_id <- "C2407807500-LANCEMODIS"
+    url <- paste0("https://cmr.earthdata.nasa.gov/search/granules.json?collection_concept_id=",
+                  concept_id, "&temporal=", temporal_str, "&bounding_box=", bounding_box_str)
+    result <- RCurl::getURL(url)
+    js <- jsonlite::fromJSON(result)
+    links <- js$feed$entry$links
+    
+    if (is.null(links)) {
+      warning("No MAIAC NRT data found either...")
+      return(NULL)
+    }
+    
+    df <- purrr::list_rbind(links)
+    df <- df |>
+      dplyr::filter(stringr::str_ends(href, ".hdf"))
 
-  # Need to get contents of the folder to create the correct filenames
-  folder <- paste0(base_url, dt_str)
-  all_files <- rvest::read_html(folder) %>%
-    rvest::html_elements("a") %>%
-    rvest::html_text()
-
-  # File the filenames that fit the pattern for this date and tile
-  dt_str2 <- strftime(dt, format = "%Y%j")
-  patterns <- paste("MCD19A2.A", dt_str2, ".", tiles_needed, ".+hdf$",
-                    sep = "")
-  files_needed <- purrr::map_chr(patterns,
-                                 ~stringr::str_subset(all_files, pattern = .x))
-
-  # If the file already exists on disk, just move on to the next one
-  write_disk_w_skip <- purrr::possibly(httr::write_disk, NULL)
-
-  # Now, download each file
-  download_one <- function(filename, user, pw) {
-    fileUrl <- paste0(folder, "/", filename)
-    httr::GET(fileUrl, httr::authenticate(user, pw),
-              write_disk_w_skip(paste0(outpath, filename)), httr::timeout(60))
-  }
-
-  purrr::walk(files_needed, download_one, user, password)
-
-}
-
-safe_cut <- purrr::possibly(`[`, otherwise = NULL)
-# Need to handle bad files with a passthrough here
-
-maiac_aod <- function(fname) {
-
-  sds <- terra::sds(fname)
-  stack <- safe_cut(sds, 1)
-  if (!is.null(stack)) {
-    # There are multiple overpasses in the file, so we combine them with avg
-    r <- terra::mean(stack, na.rm = TRUE)
-    return(r)
   } else {
-    return(NULL)
+    df <- purrr::list_rbind(links)
+    df <- df |>
+      dplyr::filter(stringr::str_starts(title, "Download") & stringr::str_ends(title, ".hdf"))
+    
   }
+  
+  urls <- df$href
+
+  # skip any files we already have
+  write_new_raster <- purrr::possibly(terra::writeRaster, otherwise = NULL)
+  safe_download <- purrr::safely(terra::rast)
+  
+  download_raster <- function(url) {
+    
+    results <- safe_download(url) 
+
+    if (is.null(results$error)) {
+      raster <- results$result
+      fname <- stringr::str_split_1(url, "/")
+      fname <- fname[length(fname)]
+      fname <- paste0(fs::path_ext_remove(fname), ".tif")
+      outfile <- fs::path_join(c(outpath, fname))
+      write_new_raster(raster, outfile)
+    } else {
+      outfile <- results$error$message
+    }
+    return(outfile)    
+  }
+  
+  # return the list of tif files downloaded (or skipped)
+  files <- purrr::map_chr(urls, download_raster, .progress = TRUE)
 
 }
 
-maiac_mosaic <- function(tiles) {
+#' Merge MAIAC tiles and fill spatial gaps for a single day
+#'
+#' Reads all MAIAC GeoTIFF files for a given date from \code{input_path}, extracts the
+#' 470 nm AOD layers (\code{Optical_Depth_047}), averages multiple overpasses per tile,
+#' mosaics the tiles, and fills remaining gaps using progressive focal windows. The
+#' result is saved as a single-layer GeoTIFF in the native MAIAC projection.
+#'
+#' @param dt A \code{Date} or date-coercible character string specifying the day to
+#'   process.
+#' @param input_path Directory containing raw MAIAC GeoTIFF files as downloaded by
+#'   \code{\link{maiac_acquire}}. Default is \code{"./raw_data/MAIAC/"}.
+#' @param output_path Directory where the processed GeoTIFF will be saved.
+#'   Default is \code{"./processed_data/MAIAC/"}.
+#' @param overwrite Logical. If \code{TRUE}, overwrite an existing output file. If
+#'   \code{FALSE} (default), a warning is issued and processing is skipped when the
+#'   output file already exists.
+#'
+#' @returns A \code{SpatRaster} with a single layer named \code{"MAIAC_AOD"} containing
+#'   merged, gap-filled 470 nm AOD values in the native MAIAC sinusoidal projection.
+#'   The raster is also written to \code{output_path} as
+#'   \code{MAIAC_processed_YYYY-MM-DD.tif}.
+#' @export
+#'
+#' @examples
+#' \dontrun{
+#' maiac_preprocess("2025-09-05")
+#' }
+maiac_preprocess <- function(dt, input_path = "./raw_data/MAIAC/", 
+                             output_path = "./processed_data/MAIAC/",
+                             overwrite = FALSE) {
+  
+  # Merge all passed tiles - confirm they are the same date
+  date_str <- paste0("A", strftime(dt, format = "%Y%j"))
+  reg <- paste0(".+", date_str, ".+tif")
+  files <- fs::dir_ls(input_path, regexp = reg)
 
-  purrr::reduce(tiles, terra::mosaic, fun = "mean")
+  process_tiles <- function(file) {
+    r_raw <- terra::rast(file)
+    # Get all the layers for AOD at 470 nm (the native for the algorithm)
+    layers_needed <- which(strtrim(terra::names(r_raw), 17) == "Optical_Depth_047")
+    r_sub <- terra::subset(r_raw, layers_needed)
+    # Combine overpasses with mean
+    r <- terra::mean(r_sub, na.rm = TRUE)
+  }
+  tiles <- purrr::map(files, process_tiles)
+  
+  # Mosiac the tiles
+  maiac <- purrr::reduce(tiles, terra::mosaic, fun = "mean")
 
+  # Fill gaps
+  maiac <- maiac_fill_gaps_complete(maiac)
+  
+  # Rename raster layer
+  names(maiac) <- "MAIAC_AOD"
+  
+  # Export file
+  outfile <- fs::path_join(c(output_path, 
+                             paste0("MAIAC_processed_", 
+                                    strftime(dt, format = "%Y-%m-%d"), ".tif")))
+  
+  if (overwrite) {
+    terra::writeRaster(maiac, outfile, overwrite = TRUE)
+  } else {
+    if (fs::file_exists(outfile)) {
+      warning("MAIAC processed file already exists. Skipping.")
+    } else {
+      terra::writeRaster(maiac, outfile, overwrite = FALSE)  
+    }
+  }
+  
+  return(maiac)
+  
 }
 
-# Use raster::focal to fill in some missing values by interpolating neighbors,
-# Then replace the remaining missing values with the median value
-maiac_fill_gaps <- function(maiac, window = 7) {
-
-  md <- terra::global(maiac, fun = median, na.rm = TRUE) %>%
-    .$global
-  sr <- terra::focal(maiac, w = window, fun = "mean", na.rm = TRUE, na.only = TRUE)
-
-  blank_space <- sr == 0
-  fill <- blank_space * md
-  filled <- sr + fill
-
-}
-
-# This version fills gaps using surrounding data in stages with increasing window sizes.
-# 5x5, then 9x9, then 25x25. Finally filling the remainder with the median value
+#' Fill gaps in a MAIAC AOD raster using progressive focal smoothing
+#'
+#' Fills \code{NA} cells in stages using focal mean windows of increasing size
+#' (5×5, then 9×9, then 25×25), applying each pass only to cells that remain
+#' \code{NA} after the previous pass. Any cells still missing after all three
+#' passes are filled with the global median of the raster.
+#'
+#' @param maiac A \code{SpatRaster} with AOD values, potentially containing
+#'   \code{NA} gaps (e.g., from cloud cover).
+#'
+#' @returns A \code{SpatRaster} of the same extent and resolution as \code{maiac}
+#'   with all \code{NA} cells filled.
+#'
+#' @seealso \code{\link{maiac_preprocess}}
 maiac_fill_gaps_complete <- function(maiac) {
 
   md <- terra::global(maiac, fun = median, na.rm = TRUE) %>%
     .$global
 
-  fill1 <- terra::focal(maiac, w = 5, fun = "mean", na.rm = TRUE, na.only = TRUE)
-  blanks <- fill1 == 0
+  fill1 <- terra::focal(maiac, w = 5, fun = "mean", na.rm = TRUE, na.policy = "only")
+  blanks <- is.na(fill1)
   fill1[blanks] <- NA
-  fill2 <- terra::focal(fill1, w = 9, fun = "mean", na.rm = TRUE, na.only = TRUE)
-  blanks <- fill2 == 0
+  fill2 <- terra::focal(fill1, w = 9, fun = "mean", na.rm = TRUE, na.policy = "only")
+  blanks <- is.na(fill2)
   fill2[blanks] <- NA
-  fill3 <- terra::focal(fill2, w = 25, fun = "mean", na.rm = TRUE, na.only = TRUE)
-  blanks <- fill3 == 0
+  fill3 <- terra::focal(fill2, w = 25, fun = "mean", na.rm = TRUE, na.policy = "only")
+  blanks <- is.na(fill3)
   med_fill <- blanks * md
+  fill3 <- terra::subst(fill3, NA, 0)
   final <- fill3 + med_fill
+  
 
 }
 
-
-extract_maiac <- function(maiac, locs) {
-
-  sin_proj <- sp::CRS("+proj=sinu +lon_0=0 +x_0=0 +y_0=0 +a=6371007.181 +b=6371007.181 +units=m +no_defs")
-  loc_sin <- sp::spTransform(locs, sin_proj)
-  vals <- terra::extract(maiac, loc_sin@coords)
-
-}
-
-maiac_one_day <- function(dt, input_path = "./data/MAIAC/",
-                          tiles_needed = c("h08v04", "h08v05", "h09v04")) {
-
-  date_str <- strftime(dt, format = "%Y%j")
-  file_prefix <- paste0("MCD19A2.A", date_str)
-
-  all_files <- fs::path_file(fs::dir_ls(input_path))
-
-  pattern <- paste0(file_prefix, ".(?:", paste(tiles_needed, collapse = "|"), ").*hdf")
-
-  files <- stringr::str_subset(all_files, pattern = pattern)
-  paths <- paste0(input_path, files)
-
-  tiles <- purrr::map(paths, maiac_aod)
-  # Remove bad tiles
-  tiles <- Filter(Negate(is.null), tiles)
-  maiac <- maiac_mosaic(tiles) %>%
-    maiac_fill_gaps_complete()
-
-}
-
-#' maiac_at_airnow
+#' Reproject and resample a MAIAC raster to match a target grid
 #'
-#' Extract aerosol optical depth values at point locations on given dates from
-#' pre-downloaded MAIAC aerosol tiles (MCD19A2).
+#' Reprojects a MAIAC \code{SpatRaster} to the CRS of \code{extent_grid}, resamples
+#' it to match the target extent and resolution, and replaces any \code{NA} values
+#' introduced during resampling with the raster's global median.
 #'
-#' @param an A SpatialPointsDataFrame with monitor data such as from
-#'   \code{\link{recast_monitors}}
-#' @param maiac_path The path to the MAIAC data (defaults to "./data/MAIAC/")
-#' @param tiles_needed The MODIS tiles required for the region of interest.
-#'   Default is c("h08v04", "h08v05", "h09v04") which covers California.
+#' @param r A \code{SpatRaster} to reproject and resample (e.g., output of
+#'   \code{\link{maiac_preprocess}}).
+#' @param extent_grid A \code{SpatRaster} defining the target CRS, extent, and
+#'   resolution (e.g., the model prediction grid).
 #'
-#' @return The data frame from \emph{an} with the extracted values from the
-#'   MAIAC data appended
-#' @export
+#' @returns A \code{SpatRaster} with the same CRS, extent, and resolution as
+#'   \code{extent_grid}, with any \code{NA} cells filled by the global median.
 #'
-#' @examples  maiac <- maiac_at_airnow(mon)
-maiac_at_airnow <- function(an, maiac_path = "./data/MAIAC/",
-                            tiles_needed = c("h08v04", "h08v05", "h09v04")) {
+#' @seealso \code{\link{maiac_preprocess}}
+maiac_regrid <- function(r, extent_grid) {
 
-  daily_extract <- function(dt) {
-    print(dt)
-    maiac_aod <- maiac_one_day(dt, input_path = maiac_path, tiles_needed = tiles_needed)
-    i <- an$Day == dt
-    locs = an[i, ]
-    e <- extract_maiac(maiac_aod, locs)
-    df <- locs@data %>%
-      mutate(MAIAC_AOD = e$focal_mean)
-  }
-
-  dates <- unique(an$Day)
-  purrr::map_dfr(dates, daily_extract)
-
-}
-
-maiac_at_grid <- function(start, end, grid, maiac_path = "./data/MAIAC/",
-                          tiles_needed = c("h08v04", "h08v05", "h09v04")) {
-
-  daily_extract <- function(dt) {
-    print(dt)
-    maiac_aod <- maiac_one_day(dt, input_path = maiac_path, tiles_needed = tiles_needed)
-    r <- raster::raster(maiac_aod)
-
-    on_grid <- extract_maiac(maiac_aod, grid)
-
-    df <- grid@data %>%
-      mutate(MAIAC_AOD = on_grid$mean,
-             Day = dt)
-  }
-
-  dates <- seq.Date(from = start, to = end, by = "1 day")
-  purrr::map_dfr(dates, daily_extract)
-
-
+  # reproject to the same coords
+  coords <- terra::crs(extent_grid)
+  r <- terra::project(r, coords)
+  r <- terra::resample(r, extent_grid)
+  
+  # If any NAs result, replace with median
+  blanks <- is.na(r)
+  md <- terra::global(r, fun = median, na.rm = TRUE) %>%
+  .$global
+  r <- terra::subst(r, NA, md)
+  
 }

@@ -1,192 +1,144 @@
 # Use an existing developed model to predict values at given new locations and dates
 
-#' predict_locs
+#' Predict gridded PM2.5 concentrations for a single day
 #'
-#' Uses an existing model, such as developed by \code{\link{develop_model}}, to
-#' predict values a given locations and dates. Prepares the data necessary to do
-#' so. MAIAC, NARR, BlueSky, and (optionally) PurpleAir data should already be
-#' downloaded.
+#' Assembles all predictor layers for a given date — kriged regulatory and temprorary monitor
+#' estimates (ANK), kriged PurpleAir estimates (PAK), HRRR meteorological variables,
+#' and MAIAC AOD — and applies a pre-trained random forest model to generate a
+#' gridded PM2.5 surface. Both log-scale and linear-scale predictions are included
+#' in the output stack alongside all input predictor layers.
 #'
-#' @param dt1 Date The earliest date of data to predict
-#' @param dt2 Date The latest date to predict
-#' @param states character A vector of two-character state codes
-#' @param model A final model object, such as extracted from the results of
-#'   \code{\link{develop_model}}. For example, if the object was called mod,
-#'   this would be mod$model$finalModel
-#' @param locations A SpatialPointsDataFrame of locations (and dates) to predict
-#' @param pa_cutoff A cutoff value passed to \code{\link[gstat]{vgm}} for
-#'   interploation of PurpleAir data
-#' @param bluesky_special  character Handles three special cases of BlueSky
-#'   data. If "2020", processes data prior to October 10, 2020 separately from
-#'   that after, as the BlueSky data format changed. If "HAQAST", uses custom
-#'   BlueSky-CMAQ output created during the HAQAST campaign (see
-#'   \url{https://doi.org/10.1080/10962247.2021.1891994}{O'Neill et al., 2021}).
-#'   If "nominal", instead use a nominal placeholder value for BlueSky PM2.5 of
-#'   0.1, which will have a near neutral impact on predictions.
-#' @param pa_data PurpleAir data in pas-like format.
+#' @param dt A \code{Date} or date-coercible character string specifying the day to
+#'   predict.
+#' @param grid_file Path to a GeoTIFF file defining the prediction grid (CRS, extent,
+#'   and resolution). Loaded with \code{terra::rast}.
+#' @param model_file Path to an RDS file containing a named list with elements:
+#'   \describe{
+#'     \item{model}{A fitted random forest model (e.g., from \code{\link{develop_model}}).}
+#'     \item{vgm_mon}{A \code{variogramModel} for regulatory monitor kriging.}
+#'     \item{vgm_pa}{A \code{variogramModel} for PurpleAir sensor kriging
+#'       (\code{nmax = 100}).}
+#'   }
+#' @param paths A named list of directory paths with the following elements:
+#'   \describe{
+#'     \item{monitors}{Directory containing combined monitor RDS files
+#'       (\code{monitors_combined_YYYY-MM-DD.RDS}).}
+#'     \item{hrrr}{Directory containing preprocessed HRRR GeoTIFF files.}
+#'     \item{maiac}{Directory containing preprocessed MAIAC GeoTIFF files.}
+#'     \item{purpleair}{Directory containing preprocessed PurpleAir RDS files.}
+#'     \item{output}{Directory where the output GeoTIFF will be saved.}
+#'   }
 #'
-#' @return A dataframe with all model input values and the resulting predictions
-#'   for the locations and dates specified in \emph{locations}
+#' @returns A multi-layer \code{SpatRaster} on the \code{grid_file} grid with layers:
+#'   \describe{
+#'     \item{PM25_RF}{Random forest PM2.5 prediction (µg/m³, linear scale).}
+#'     \item{PM25_log_RF}{Random forest PM2.5 prediction (log scale).}
+#'     \item{PM25_log_ANK}{Kriged regulatory monitor estimate (log scale).}
+#'     \item{PM25_log_PAK}{Kriged PurpleAir estimate (log scale).}
+#'     \item{MASSDEN_log, HPBL, RH, UGRD, VGRD, TMP, APCP}{HRRR meteorological
+#'       predictors.}
+#'     \item{MAIAC_AOD}{MAIAC aerosol optical depth.}
+#'   }
+#'   The raster is also written to \code{paths[["output"]]} as
+#'   \code{rapidfire_YYYY-MM-DD.tif}.
 #' @export
 #'
-#' @examples pred <- predict_locs(dt1, dt2, states = "CA", model = mod$model$finalModel,
-#'                                locations = locs, pa_data = pa)
-predict_locs <- function(dt1, dt2, states = "CA", model, locations,
-                         pa_cutoff = 100000, bluesky_special = NULL,
-                         pa_data = NULL) {
-
-  # Get and prep AirNow and mobile monitor data
-  print("AirNow, AirSIS, and WRCC data...")
-  an_ws <- get_monitor_daterange(dt1, dt2, states, "airnow")
-  as_ws <- get_monitor_daterange(dt1, dt2, states, "airsis")
-  wr_ws <- get_monitor_daterange(dt1, dt2, states, "wrcc")
-  mon <- do.call(rbind, c(an_ws, as_ws, wr_ws))
-
-  an_vg <- create_airnow_variograms(mon)
-  ank <- krige_airnow_sitedates(mon, locations, an_vg)
-
-  # Prep Bluesky For 2020, the grid changed midway through october - will need
-  # to process them separately. I added this hack to address it
-  print("BlueSky data...")
-  if (!is.null(bluesky_special)) {
-    if (bluesky_special == "2020") {
-      bluesky <- bluesky_archive_at_locs(locations)
-    } else if (bluesky_special == "HAQAST") {
-      #Use the HAQAST S1 CMAQ run instead of the standard Bluesky archive
-      stop("Need to implement bluesky_haqast_at_locs")
-      bluesky_stack <- stack_haqast_archive(dt1, dt2)
-      bluesky <- preprocessed_bluesky_at_airnow(bluesky_stack, mon)
-    } else if (bluesky_special == "nominal") {
-      bluesky <- bluesky_nominal(locations)
-    } else {
-      stop(paste("bluesky_special:", bluesky_special, "not supported"))
-    }
-  } else {
-    bluesky <- bluesky_archive_at_locs(locations)
-  }
-
-  # Prep MAIAC AOD
-  print("Preparing MAIAC...")
-  maiac <- maiac_at_airnow(locations)
-
-  # Prep NARR
-  print("Preparing NARR...")
-  narr <- narr_at_airnow(locations)
-
-  # Get and prep PurpleAir data For dates prior to April 5, 2019, the data must
-  # be acquired by create_purpleair_archive before running this script
-  print("PurpleAir data...")
-  pa_data <- readRDS(pa_data) %>%
-    filter(Date >= dt1,
-          Date <=dt2)
-
-  pas <- purpleair_spatial(pa_data)
-  pa_clean <- purpleair_clean_spatial_outliers(pas)
-  pa_vg <- create_purpleair_variograms(pa_clean, cutoff = pa_cutoff)
-
-  # Krige purple air data for all locations in the monitor data set
-  pa_ok <- krige_purpleair_sitedates(pa_clean, locations, pa_vg)
-
-  # All the inputs
-  # PurpleAir Kriged
-  pak_in <- pa_ok %>%
-    select(monitorID, Day, PM25_log_PAK)
-  # NARR
-  narr_in <- narr %>%
-    select(-one_of("PM25"), -one_of("Source"))
-  # Bluesky
-  bluesky_in <- bluesky %>%
-    select(monitorID, Day, PM25_bluesky)
-  # MAIAC AOD
-  maiac_in <- maiac %>%
-    select(monitorID, Day, MAIAC_AOD)
-
-  results <- ank %>%
-    left_join(pak_in, by = c("monitorID", "Day")) %>%
-    left_join(narr_in, by = c("monitorID", "Day")) %>%
-    left_join(bluesky_in, by = c("monitorID", "Day")) %>%
-    left_join(maiac_in, by = c("monitorID", "Day")) %>%
-  # Replace missing and non-finite values with overall median
-    mutate(across(where(is.numeric),
-                  ~ifelse(is.finite(.x), .x, median(.x, na.rm = TRUE))))
-
-  # How do I require randomForest be loaded here?
-  results$PM25_log_RF <- predict(model, results)
-  return(results)
-}
-
-
-#' Title
-#'
-#' @param dt1 
-#' @param dt2 
-#' @param states 
-#' @param model 
-#' @param locations 
-#' @param pa_cutoff 
-#' @param pa_data 
-#' @param hrrr_path 
-#'
-#' @returns
-#' @export
+#' @seealso \code{\link{hrrr_stack}}, \code{\link{monitors_krige_grid}},
+#'   \code{\link{maiac_regrid}}
 #'
 #' @examples
-predict_locs_h <- function(dt1, dt2, states = "CA", model, locations,
-                         pa_cutoff = 100000, pa_data = NULL,
-                         hrrr_path = "./data/hrrr/processed/",
-                         maiac_path = "./data/MAIAC/C61/") {
+#' \dontrun{
+#' result <- predict_grid(
+#'   dt = "2024-11-15",
+#'   grid_file = "./grid/prediction_grid.tif",
+#'   model_file = "./models/rapidfire_model.RDS",
+#'   paths = list(
+#'     monitors  = "./processed_data/monitors/",
+#'     hrrr      = "./processed_data/HRRR/",
+#'     maiac     = "./processed_data/MAIAC/",
+#'     purpleair = "./processed_data/purpleair/",
+#'     output    = "./output/"
+#'   )
+#' )
+#' }
+predict_grid <- function(dt, grid_file, model_file, paths) {
   
-  # Get and prep AirNow and mobile monitor data
-  print("AirNow, AirSIS, and WRCC data...")
-  an_ws <- get_monitor_daterange(dt1, dt2, states, "airnow")
-  as_ws <- get_monitor_daterange(dt1, dt2, states, "airsis")
-  wr_ws <- get_monitor_daterange(dt1, dt2, states, "wrcc")
-  mon <- do.call(rbind, c(an_ws, as_ws, wr_ws))
+  # Load template grid
+  grid <- terra::rast(grid_file)
+  
+  # load monitoring data
+  monitoring_file <- fs::path_join(c(paths[["monitors"]], 
+                                     paste0("monitors_combined_",
+                                            strftime(dt, "%Y-%m-%d"),
+                                            ".RDS")))
+  mon <- terra::readRDS(monitoring_file)
+  
+  models <- readRDS(model_file)
+  
+  # load met and smoke data from hrrr
+  hrrr <- hrrr_stack(dt, paths[["hrrr"]])
+  
+  # Convert MASSDEN to log scale
+  massdenlog <- log(hrrr$MASSDEN)
+  names(massdenlog) <- "MASSDEN_log"
+  hrrr <- terra::rast(list(massdenlog, hrrr))
+  hrrr <- terra::subset(hrrr, which(names(hrrr)=="MASSDEN"), negate = TRUE)
+  
+  # interpolate to grid
+  # mon_vgm <- monitors_variogram(mon)
+  mon_vgm <- models$vgm_mon
+  monitor_grid <- monitors_krige_grid(mon, grid, mon_vgm)
+  ank <- monitor_grid[[1]]
+  names(ank) <- "PM25_log_ANK"
 
-  an_vg <- create_airnow_variograms(mon)
-  ank <- krige_airnow_sitedates(mon, locations, an_vg)
   
-  # Prep MAIAC AOD
-  print("Preparing MAIAC...")
-  maiac <- maiac_at_airnow(locations, maiac_path)
   
-  # Prep HRRR-smoke
-  print("Preparing HRRR-smoke")
-  hrrr <- hrrr_at_sites(locations, input_path = hrrr_path)
+  # load satellite data
+  maiac_file <- fs::path_join(c(paths[["maiac"]],
+                                paste0("MAIAC_processed_", strftime(dt, "%Y-%m-%d"), ".tif")))
+  maiac <- terra::rast(maiac_file)
   
-  # the data must created by pa_build_dataset
-  print("PurpleAir data...")
-  pa_data <- readRDS(pa_data) %>%
-    filter(Date >= dt1,
-           Date <=dt2)
+  # interpolate to grid
+  maiac <- maiac_regrid(maiac, grid)
+  
+  # load sensor data
+  ### Sensor data will be coming from CDPH? Need non-cdph way as well
+  pa_file <- fs::path_join(c(paths[["purpleair"]],
+                             paste0("purpleair_processed_",
+                                    strftime(dt, "%Y-%m-%d"),
+                                    ".RDS")))
+  pa <- terra::readRDS(pa_file)
+  
+  # interpolate to grid
+  #pa_vgm <- monitors_variogram(pa)
+  pa_vgm <- models$vgm_pa
+  pa_grid <- monitors_krige_grid(pa, grid, pa_vgm, nmax = 100)
+  pak <- pa_grid[[1]]
+  names(pak) <- "PM25_log_PAK"
 
-  pas <- purpleair_spatial(pa_data)
-  pa_clean <- purpleair_clean_spatial_outliers(pas)
-  pa_vg <- create_purpleair_variograms(pa_clean, cutoff = pa_cutoff)
+  # combine data
+  stack <- terra::rast(list(ank, pak, hrrr, maiac))
 
-  # Krige purple air data for all locations in the monitor data set
-  pa_ok <- krige_purpleair_sitedates(pa_clean, locations, pa_vg)
+  # run model
+  #model <- readRDS(model_file)$model
+  model <- models$model
+  res <- terra::predict(stack, model)
+  names(res) <- "PM25_log_RF"
 
-  # All the inputs
-  # PurpleAir Kriged
-  pak_in <- pa_ok %>%
-    select(monitorID, Day, PM25_log_PAK)
-  # HRRR
-  hrrr_in <- hrrr %>%
-    select(monitorID, Day, HPBL, RH, UGRD, VGRD, TMP, MASSDEN)
-  # MAIAC AOD
-  maiac_in <- maiac %>%
-    select(monitorID, Day, MAIAC_AOD)
+  # convert to linear
+  linear <- exp(res)
+  names(linear) <- "PM25_RF"
   
-  results <- ank %>%
-    left_join(pak_in, by = c("monitorID", "Day")) %>%
-    left_join(hrrr_in, by = c("monitorID", "Day")) %>%
-    left_join(maiac_in, by = c("monitorID", "Day")) %>%
-    # Replace missing and non-finite values with overall median
-    mutate(across(where(is.numeric),
-                  ~ifelse(is.finite(.x), .x, median(.x, na.rm = TRUE))))
+  # stack output (including input)
+  final <- terra::rast(list(linear, res, stack))
   
-  # How do I require randomForest be loaded here?
-  results$PM25_log_RF <- predict(model, results)
-  return(results)
+  # Export file
+  outfile <- fs::path_join(c(paths[["output"]], 
+                             paste0("rapidfire_", 
+                                    strftime(dt, format = "%Y-%m-%d"), ".tif")))
+  
+  terra::writeRaster(final, outfile, overwrite = TRUE)
+
+  return(final)
+  
 }
