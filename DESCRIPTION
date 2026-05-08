@@ -13,13 +13,10 @@ Imports:
     fs,
     dplyr,
     purrr,
-    ncdf4,
     sf,
-    raster,
     sp,
     randomForest,
     caret,
-    rvest,
     httr,
     terra,
     stringr,
@@ -29,6 +26,14 @@ Imports:
     jsonlite,
     magrittr,
     AirMonitor,
-    earthdatalogin
+    earthdatalogin,
+    DBI,
+    duckdb,
+    glue,
+    readr,
+    RCurl
 Suggests:
-  ggplot2
+  ggplot2,
+  scales,
+  colorspace,
+  tidyterra

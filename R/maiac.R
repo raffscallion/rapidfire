@@ -181,3 +181,17 @@ maiac_fill_gaps_complete <- function(maiac) {
 
 }
 
+maiac_regrid <- function(r, extent_grid) {
+
+  # reproject to the same coords
+  coords <- terra::crs(extent_grid)
+  r <- terra::project(r, coords)
+  r <- terra::resample(r, extent_grid)
+  
+  # If any NAs result, replace with median
+  blanks <- is.na(r)
+  md <- terra::global(r, fun = median, na.rm = TRUE) %>%
+  .$global
+  r <- terra::subst(r, NA, md)
+  
+}
