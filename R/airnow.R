@@ -1,18 +1,34 @@
 
-# AirNow data via their api
+# AirNow data via their file archive
 # This seems more reliable than AirSensor, but doesn't include AIRSIS and other temporary data
 
-
-#' Title
+#' Acquire AirNow daily PM2.5 monitor data
 #'
-#' @param date 
-#' @param output_path 
-#' @param crs 
+#' Downloads the AirNow daily data file for a given date from the AirNow S3
+#' archive, filters to 24-hour average PM2.5 observations, log-transforms the
+#' values, and returns a projected \code{SpatVector} saved to disk. This source
+#' covers regulatory monitors but does not include temporary monitors from AIRSIS
+#' or WRCC (see \code{\link[rapidfire]{temp_monitors_acquire}} for those).
 #'
-#' @returns
+#' @param date A \code{Date} or date-coercible character string specifying the day
+#'   to acquire.
+#' @param output_path Directory path where the processed RDS file will be saved.
+#'   Default is \code{"./processed_data/airnow/"}.
+#' @param crs Coordinate reference system string passed to \code{terra::project}.
+#'   Default is \code{"EPSG:3395"}.
+#'
+#' @returns A \code{SpatVector} with one point per monitor and columns
+#'   \code{monitorID} (AQS site identifier), \code{Day} (date), and
+#'   \code{PM25_log} (log-transformed 24-hour average PM2.5). Also written to
+#'   \code{output_path} as \code{airnow_pm25_24hr_YYYY-MM-DD.RDS}.
 #' @export
 #'
+#' @seealso \code{\link{monitors_combine}}
+#'
 #' @examples
+#' \dontrun{
+#' airnow_acquire("2024-11-15")
+#' }
 airnow_acquire <- function(date, output_path = "./processed_data/airnow/",
                            crs = "EPSG:3395") {
   

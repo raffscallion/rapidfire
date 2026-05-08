@@ -2,7 +2,7 @@
 % Please edit documentation in R/hrrr-smoke.R
 \name{hrrr_acquire}
 \alias{hrrr_acquire}
-\title{Title}
+\title{Download and preprocess HRRR-smoke data for a single day}
 \usage{
 hrrr_acquire(
   date,
@@ -14,18 +14,38 @@ hrrr_acquire(
 )
 }
 \arguments{
-\item{date}{}
+\item{date}{A \code{Date} or date-coercible character string specifying the local
+day to acquire.}
 
-\item{outpath}{}
+\item{outpath}{Directory path for saving both the raw GRIB2 downloads and the
+processed GeoTIFF outputs.}
 
-\item{extent_grid}{}
+\item{extent_grid}{A \code{SpatRaster} defining the target CRS, spatial extent,
+and resolution for all output files (e.g., the model prediction grid).}
 
-\item{tz}{}
+\item{tz}{Local timezone string used to identify the 24 UTC hours that correspond
+to the requested local calendar day. Default is \code{"America/Los_Angeles"}.}
 
-\item{crs}{}
+\item{crs}{Output coordinate reference system string passed to
+\code{terra::project}. Default is \code{"EPSG:3395"}.}
 
-\item{delete_files}{}
+\item{delete_files}{Logical. If \code{TRUE}, the raw GRIB2 files and their
+\code{.idx} index files are deleted after processing. Default is \code{FALSE}.}
+}
+\value{
+Called for its side effect of writing one GeoTIFF per variable to
+  \code{outpath}. Invisibly returns \code{NULL}.
 }
 \description{
-Title
+Downloads the 24 HRRR forecast hour-1 (F001) GRIB2 files needed to represent a
+full local calendar day, subsets and regrids them to \code{extent_grid}, then
+computes 24-hour means for atmospheric variables (HPBL, RH, UGRD, VGRD, TMP,
+MASSDEN) and the cumulative precipitation total (APCP). Each variable is written
+to \code{outpath} as a separate GeoTIFF named
+\code{VARNAME_YYYYMMDD_hrrrsmoke.tif}.
+}
+\examples{
+\dontrun{
+hrrr_acquire("2024-11-15", outpath = "./raw_data/HRRR/", extent_grid = grid)
+}
 }

@@ -2,7 +2,7 @@
 % Please edit documentation in R/maiac.R
 \name{maiac_acquire}
 \alias{maiac_acquire}
-\title{Download MAIAC AOD data from NASA EartData archive and save it as tif}
+\title{Download MAIAC AOD data from the NASA EarthData archive and save as GeoTIFF}
 \usage{
 maiac_acquire(
   dt,
@@ -14,25 +14,40 @@ maiac_acquire(
 )
 }
 \arguments{
-\item{dt}{character or date - date of MAIAC data to acquire}
+\item{dt}{A \code{Date} or date-coercible character string specifying the local day
+to acquire.}
 
-\item{user}{username for NASA EarthData login}
+\item{user}{NASA EarthData username. If \code{NULL}, uses credentials previously
+configured by \code{earthdatalogin::edl_netrc}.}
 
-\item{password}{password for NASA EartData login}
+\item{password}{NASA EarthData password. If \code{NULL}, uses stored credentials.}
 
-\item{outpath}{output path for files}
+\item{outpath}{Directory path where downloaded GeoTIFF files will be saved.
+Default is \code{"./raw_data/MAIAC/"}.}
 
-\item{bounding_box}{a vector of coordinates, x1, y1, x2, y2 to bound the request. The
-default bounding box covers California}
+\item{bounding_box}{A numeric vector of four coordinates
+\code{c(xmin, ymin, xmax, ymax)} in WGS84 (EPSG:4326) defining the spatial
+extent of the request. Default covers California.}
 
-\item{tz}{time zone for the requested location (default is America/Los_Angeles)}
+\item{tz}{Time zone string for the requested location, used to convert \code{dt}
+to UTC for the CMR query. Default is \code{"America/Los_Angeles"}.}
 }
 \value{
-Returns the list of tif files and downloads files to disk
+A character vector of file paths for the downloaded GeoTIFF files.
+  Files that fail to download return an error message string in place of a path.
 }
 \description{
-Download MAIAC AOD data from NASA EartData archive and save it as tif
+Queries the NASA CMR API for MAIAC AOD granules (MCD19A2 C6.1) intersecting a
+bounding box and date. If standard MAIAC data are not yet available, falls back to
+the Near Real-Time product (MCD19A2N C6.1NRT). Matching HDF granules are downloaded
+and written to disk as GeoTIFF files.
 }
 \examples{
-maiac_acquire("2025-09-05", user = u, password = p)
+\dontrun{
+maiac_acquire(
+  "2025-09-05",
+  user = Sys.getenv("EARTHDATA_USER"),
+  password = Sys.getenv("EARTHDATA_PASSWORD")
+)
+}
 }

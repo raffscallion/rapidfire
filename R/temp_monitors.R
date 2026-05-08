@@ -3,18 +3,40 @@
 # However, we still use AirMonitor for the full list of temporary monitors that may not be
 # in airnow.
 
-#' Title
+#' Acquire temporary monitor (AIRSIS/WRCC) daily PM2.5 data
 #'
-#' @param date 
-#' @param states 
-#' @param timezone 
-#' @param output_path 
-#' @param crs 
+#' Downloads AIRSIS and WRCC temporary monitor data via the \pkg{AirMonitor} package,
+#' selects the appropriate archive tier based on how recent the requested date is
+#' (latest < 10 days, daily < 45 days, annual otherwise), computes 24-hour average
+#' PM2.5, and returns a projected \code{SpatVector} saved to disk. Only monitors with
+#' at least 16 hours of valid observations are retained.
 #'
-#' @returns
+#' @param date A \code{Date} or date-coercible character string specifying the day
+#'   to acquire.
+#' @param states An optional character vector of two-letter state codes used to
+#'   filter monitors (e.g., \code{c("CA", "OR", "WA")}). If \code{NULL}, all
+#'   available monitors are retained.
+#' @param timezone Local timezone string used to assign observations to the correct
+#'   calendar day. Default is \code{"America/Los_Angeles"}.
+#' @param output_path Directory path where the processed RDS file will be saved.
+#'   Default is \code{"./processed_data/temp_monitors/"}.
+#' @param crs Coordinate reference system string passed to \code{terra::project}.
+#'   Default is \code{"EPSG:3395"}.
+#'
+#' @returns A \code{SpatVector} with one point per monitor and columns
+#'   \code{monitorID} (device deployment ID), \code{Day} (date), \code{PM25}
+#'   (24-hour mean PM2.5), \code{Hours} (number of hourly observations used),
+#'   and \code{PM25_log} (log-transformed PM2.5). Returns \code{NULL} if no
+#'   monitors with sufficient data are found. Also written to \code{output_path}
+#'   as \code{temp_monitors_pm25_24hr_YYYY-MM-DD.RDS}.
 #' @export
 #'
+#' @seealso \code{\link{monitors_combine}}, \code{\link{airnow_acquire}}
+#'
 #' @examples
+#' \dontrun{
+#' temp_monitors_acquire("2024-11-15", states = c("CA", "OR", "NV"))
+#' }
 temp_monitors_acquire <- function(date, states = NULL, timezone = "America/Los_Angeles",
                                   output_path = "./processed_data/temp_monitors/",
                                   crs = "EPSG:3395") {
@@ -50,8 +72,25 @@ temp_monitors_acquire <- function(date, states = NULL, timezone = "America/Los_A
 
 }
 
-# Convert a mts_monitor object to a spatvector in a standard projection. Also calculate
-# 24-hr average and log.
+#' Convert an AirMonitor \code{mts_monitor} object to a projected SpatVector
+#'
+#' Pivots hourly monitor data to long format, joins site metadata, computes daily
+#' mean PM2.5 in local time, and filters to days with at least 16 valid hourly
+#' observations and positive mean values. Log-transforms the daily mean and returns
+#' the result as a projected \code{SpatVector}.
+#'
+#' @param mon An \code{mts_monitor} object as returned by \pkg{AirMonitor} functions
+#'   such as \code{AirMonitor::monitor_combine}.
+#' @param crs Coordinate reference system string passed to \code{terra::project}.
+#'   Default is \code{"EPSG:3395"}.
+#' @param timezone Local timezone string used to assign hourly observations to the
+#'   correct calendar day.
+#'
+#' @returns A \code{SpatVector} with columns \code{monitorID}, \code{Day},
+#'   \code{PM25}, \code{Hours}, and \code{PM25_log}, or \code{NULL} if no monitors
+#'   meet the data completeness threshold.
+#'
+#' @seealso \code{\link{temp_monitors_acquire}}
 temp_monitors_preprocess <- function(mon, crs = "EPSG:3395", timezone = timezone) {
   
   df <- mon$data |>

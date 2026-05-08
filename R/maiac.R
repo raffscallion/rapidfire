@@ -1,19 +1,37 @@
 
 
-#' Download MAIAC AOD data from NASA EartData archive and save it as tif
+#' Download MAIAC AOD data from the NASA EarthData archive and save as GeoTIFF
 #'
-#' @param dt character or date - date of MAIAC data to acquire
-#' @param user username for NASA EarthData login
-#' @param password password for NASA EartData login
-#' @param outpath output path for files
-#' @param bounding_box a vector of coordinates, x1, y1, x2, y2 to bound the request. The
-#'   default bounding box covers California
-#' @param tz time zone for the requested location (default is America/Los_Angeles)
+#' Queries the NASA CMR API for MAIAC AOD granules (MCD19A2 C6.1) intersecting a
+#' bounding box and date. If standard MAIAC data are not yet available, falls back to
+#' the Near Real-Time product (MCD19A2N C6.1NRT). Matching HDF granules are downloaded
+#' and written to disk as GeoTIFF files.
 #'
-#' @returns Returns the list of tif files and downloads files to disk
+#' @param dt A \code{Date} or date-coercible character string specifying the local day
+#'   to acquire.
+#' @param user NASA EarthData username. If \code{NULL}, uses credentials previously
+#'   configured by \code{earthdatalogin::edl_netrc}.
+#' @param password NASA EarthData password. If \code{NULL}, uses stored credentials.
+#' @param outpath Directory path where downloaded GeoTIFF files will be saved.
+#'   Default is \code{"./raw_data/MAIAC/"}.
+#' @param bounding_box A numeric vector of four coordinates
+#'   \code{c(xmin, ymin, xmax, ymax)} in WGS84 (EPSG:4326) defining the spatial
+#'   extent of the request. Default covers California.
+#' @param tz Time zone string for the requested location, used to convert \code{dt}
+#'   to UTC for the CMR query. Default is \code{"America/Los_Angeles"}.
+#'
+#' @returns A character vector of file paths for the downloaded GeoTIFF files.
+#'   Files that fail to download return an error message string in place of a path.
 #' @export
 #'
-#' @examples maiac_acquire("2025-09-05", user = u, password = p)
+#' @examples
+#' \dontrun{
+#' maiac_acquire(
+#'   "2025-09-05",
+#'   user = Sys.getenv("EARTHDATA_USER"),
+#'   password = Sys.getenv("EARTHDATA_PASSWORD")
+#' )
+#' }
 maiac_acquire <- function(dt, user = NULL, password = NULL, outpath = "./raw_data/MAIAC/",
                           bounding_box = c(-124.5, 32.5, -114, 42.1),
                           tz = "America/Los_Angeles") {
@@ -100,18 +118,33 @@ maiac_acquire <- function(dt, user = NULL, password = NULL, outpath = "./raw_dat
 
 }
 
-# Merge tiles and fill gaps. We keep in native projection to preserve info.
-#' Title
+#' Merge MAIAC tiles and fill spatial gaps for a single day
 #'
-#' @param dt 
-#' @param input_path 
-#' @param output_path 
-#' @param overwrite 
+#' Reads all MAIAC GeoTIFF files for a given date from \code{input_path}, extracts the
+#' 470 nm AOD layers (\code{Optical_Depth_047}), averages multiple overpasses per tile,
+#' mosaics the tiles, and fills remaining gaps using progressive focal windows. The
+#' result is saved as a single-layer GeoTIFF in the native MAIAC projection.
 #'
-#' @returns
+#' @param dt A \code{Date} or date-coercible character string specifying the day to
+#'   process.
+#' @param input_path Directory containing raw MAIAC GeoTIFF files as downloaded by
+#'   \code{\link{maiac_acquire}}. Default is \code{"./raw_data/MAIAC/"}.
+#' @param output_path Directory where the processed GeoTIFF will be saved.
+#'   Default is \code{"./processed_data/MAIAC/"}.
+#' @param overwrite Logical. If \code{TRUE}, overwrite an existing output file. If
+#'   \code{FALSE} (default), a warning is issued and processing is skipped when the
+#'   output file already exists.
+#'
+#' @returns A \code{SpatRaster} with a single layer named \code{"MAIAC_AOD"} containing
+#'   merged, gap-filled 470 nm AOD values in the native MAIAC sinusoidal projection.
+#'   The raster is also written to \code{output_path} as
+#'   \code{MAIAC_processed_YYYY-MM-DD.tif}.
 #' @export
 #'
 #' @examples
+#' \dontrun{
+#' maiac_preprocess("2025-09-05")
+#' }
 maiac_preprocess <- function(dt, input_path = "./raw_data/MAIAC/", 
                              output_path = "./processed_data/MAIAC/",
                              overwrite = FALSE) {
@@ -159,8 +192,20 @@ maiac_preprocess <- function(dt, input_path = "./raw_data/MAIAC/",
   
 }
 
-# This version fills gaps using surrounding data in stages with increasing window sizes.
-# 5x5, then 9x9, then 25x25. Finally filling the remainder with the median value
+#' Fill gaps in a MAIAC AOD raster using progressive focal smoothing
+#'
+#' Fills \code{NA} cells in stages using focal mean windows of increasing size
+#' (5×5, then 9×9, then 25×25), applying each pass only to cells that remain
+#' \code{NA} after the previous pass. Any cells still missing after all three
+#' passes are filled with the global median of the raster.
+#'
+#' @param maiac A \code{SpatRaster} with AOD values, potentially containing
+#'   \code{NA} gaps (e.g., from cloud cover).
+#'
+#' @returns A \code{SpatRaster} of the same extent and resolution as \code{maiac}
+#'   with all \code{NA} cells filled.
+#'
+#' @seealso \code{\link{maiac_preprocess}}
 maiac_fill_gaps_complete <- function(maiac) {
 
   md <- terra::global(maiac, fun = median, na.rm = TRUE) %>%
@@ -181,6 +226,21 @@ maiac_fill_gaps_complete <- function(maiac) {
 
 }
 
+#' Reproject and resample a MAIAC raster to match a target grid
+#'
+#' Reprojects a MAIAC \code{SpatRaster} to the CRS of \code{extent_grid}, resamples
+#' it to match the target extent and resolution, and replaces any \code{NA} values
+#' introduced during resampling with the raster's global median.
+#'
+#' @param r A \code{SpatRaster} to reproject and resample (e.g., output of
+#'   \code{\link{maiac_preprocess}}).
+#' @param extent_grid A \code{SpatRaster} defining the target CRS, extent, and
+#'   resolution (e.g., the model prediction grid).
+#'
+#' @returns A \code{SpatRaster} with the same CRS, extent, and resolution as
+#'   \code{extent_grid}, with any \code{NA} cells filled by the global median.
+#'
+#' @seealso \code{\link{maiac_preprocess}}
 maiac_regrid <- function(r, extent_grid) {
 
   # reproject to the same coords

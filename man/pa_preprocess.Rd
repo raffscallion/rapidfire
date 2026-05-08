@@ -2,8 +2,7 @@
 % Please edit documentation in R/purpleair.R
 \name{pa_preprocess}
 \alias{pa_preprocess}
-\title{Take realtime purpleair data from a duckdb file and create 24-hr averages ready for
-interpolation}
+\title{Preprocess realtime PurpleAir data into 24-hour averages ready for interpolation}
 \usage{
 pa_preprocess(
   dt,
@@ -17,9 +16,44 @@ pa_preprocess(
 )
 }
 \arguments{
-\item{output_path}{}
+\item{dt}{A \code{Date} or date-coercible string specifying the local day to process.}
+
+\item{duckdb_path}{Path to the DuckDB database file containing the \code{pa_realtime}
+table.}
+
+\item{sensors}{A data frame of sensor metadata containing at minimum
+\code{sensor_index}, \code{latitude}, \code{longitude}, and \code{location_type}
+columns (e.g., from \code{\link{pa_find_sensors}}).}
+
+\item{location_types}{Numeric vector of PurpleAir location type codes to retain.
+0 = outside, 1 = inside. Default is \code{0}.}
+
+\item{timezone}{Local timezone string used to assign the correct calendar day.
+Default is \code{"America/Los_Angeles"}.}
+
+\item{clean_outliers}{Logical. If \code{TRUE}, apply spatial outlier removal via
+\code{pa_clean_spatial_outliers}. Default is \code{TRUE}.}
+
+\item{crs}{Coordinate reference system string passed to \code{terra::project}.
+Default is \code{"EPSG:3395"}.}
+
+\item{output_path}{Directory path where the processed RDS file will be saved.
+Default is \code{"./processed_data/purpleair/"}.}
+}
+\value{
+A \code{SpatVector} of sensors with log-mean 24-hour PM2.5 values
+  (\code{PM25_log}) projected to \code{crs}. The object is also saved to
+  \code{output_path} as an RDS file named
+  \code{purpleair_processed_YYYY-MM-DD.RDS}.
 }
 \description{
-Take realtime purpleair data from a duckdb file and create 24-hr averages ready for
-interpolation
+Reads realtime PurpleAir data from a DuckDB database, computes log-mean 24-hour
+PM2.5 averages for a specified date, filters by location type and data completeness,
+and returns a projected SpatVector saved to disk.
+}
+\examples{
+\dontrun{
+sensors <- pa_find_sensors(-124.41, 42.01, -114.13, 32.53, key = Sys.getenv("PURPLEAIR_READ_KEY"))
+pa_preprocess("2024-11-15", duckdb_path = "purpleair.duckdb", sensors = sensors)
+}
 }

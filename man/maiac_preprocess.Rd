@@ -2,7 +2,7 @@
 % Please edit documentation in R/maiac.R
 \name{maiac_preprocess}
 \alias{maiac_preprocess}
-\title{Title}
+\title{Merge MAIAC tiles and fill spatial gaps for a single day}
 \usage{
 maiac_preprocess(
   dt,
@@ -12,14 +12,33 @@ maiac_preprocess(
 )
 }
 \arguments{
-\item{dt}{}
+\item{dt}{A \code{Date} or date-coercible character string specifying the day to
+process.}
 
-\item{input_path}{}
+\item{input_path}{Directory containing raw MAIAC GeoTIFF files as downloaded by
+\code{\link{maiac_acquire}}. Default is \code{"./raw_data/MAIAC/"}.}
 
-\item{output_path}{}
+\item{output_path}{Directory where the processed GeoTIFF will be saved.
+Default is \code{"./processed_data/MAIAC/"}.}
 
-\item{overwrite}{}
+\item{overwrite}{Logical. If \code{TRUE}, overwrite an existing output file. If
+\code{FALSE} (default), a warning is issued and processing is skipped when the
+output file already exists.}
+}
+\value{
+A \code{SpatRaster} with a single layer named \code{"MAIAC_AOD"} containing
+  merged, gap-filled 470 nm AOD values in the native MAIAC sinusoidal projection.
+  The raster is also written to \code{output_path} as
+  \code{MAIAC_processed_YYYY-MM-DD.tif}.
 }
 \description{
-Title
+Reads all MAIAC GeoTIFF files for a given date from \code{input_path}, extracts the
+470 nm AOD layers (\code{Optical_Depth_047}), averages multiple overpasses per tile,
+mosaics the tiles, and fills remaining gaps using progressive focal windows. The
+result is saved as a single-layer GeoTIFF in the native MAIAC projection.
+}
+\examples{
+\dontrun{
+maiac_preprocess("2025-09-05")
+}
 }

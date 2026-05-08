@@ -1,19 +1,37 @@
-#' Take realtime purpleair data from a duckdb file and create 24-hr averages ready for
-#' interpolation
+#' Preprocess realtime PurpleAir data into 24-hour averages ready for interpolation
 #'
-#' @param dt
-#' @param duckdb_path
-#' @param sensors
-#' @param location_types
-#' @param timezone
-#' @param clean_outliers
-#' @param crs
-#' @param output_path
+#' Reads realtime PurpleAir data from a DuckDB database, computes log-mean 24-hour
+#' PM2.5 averages for a specified date, filters by location type and data completeness,
+#' and returns a projected SpatVector saved to disk.
 #'
-#' @returns
+#' @param dt A \code{Date} or date-coercible string specifying the local day to process.
+#' @param duckdb_path Path to the DuckDB database file containing the \code{pa_realtime}
+#'   table.
+#' @param sensors A data frame of sensor metadata containing at minimum
+#'   \code{sensor_index}, \code{latitude}, \code{longitude}, and \code{location_type}
+#'   columns (e.g., from \code{\link{pa_find_sensors}}).
+#' @param location_types Numeric vector of PurpleAir location type codes to retain.
+#'   0 = outside, 1 = inside. Default is \code{0}.
+#' @param timezone Local timezone string used to assign the correct calendar day.
+#'   Default is \code{"America/Los_Angeles"}.
+#' @param clean_outliers Logical. If \code{TRUE}, apply spatial outlier removal via
+#'   \code{pa_clean_spatial_outliers}. Default is \code{TRUE}.
+#' @param crs Coordinate reference system string passed to \code{terra::project}.
+#'   Default is \code{"EPSG:3395"}.
+#' @param output_path Directory path where the processed RDS file will be saved.
+#'   Default is \code{"./processed_data/purpleair/"}.
+#'
+#' @returns A \code{SpatVector} of sensors with log-mean 24-hour PM2.5 values
+#'   (\code{PM25_log}) projected to \code{crs}. The object is also saved to
+#'   \code{output_path} as an RDS file named
+#'   \code{purpleair_processed_YYYY-MM-DD.RDS}.
 #' @export
 #'
 #' @examples
+#' \dontrun{
+#' sensors <- pa_find_sensors(-124.41, 42.01, -114.13, 32.53, key = Sys.getenv("PURPLEAIR_READ_KEY"))
+#' pa_preprocess("2024-11-15", duckdb_path = "purpleair.duckdb", sensors = sensors)
+#' }
 pa_preprocess <- function(dt, duckdb_path, sensors, location_types = 0,
                           timezone = "America/Los_Angeles",
                           clean_outliers = TRUE,
@@ -81,21 +99,33 @@ pa_preprocess <- function(dt, duckdb_path, sensors, location_types = 0,
   
 }
 
-# Get the current data for all sensors within a bounding box. Schedule this to build a db
-#' Title
+#' Acquire realtime PurpleAir sensor readings into a DuckDB database
 #'
-#' @param nwlng 
-#' @param nwlat 
-#' @param selng 
-#' @param selat 
-#' @param max_age 
-#' @param key 
-#' @param dbdir 
+#' Fetches the most recent PM2.5 readings for all sensors within a bounding box
+#' from the PurpleAir API and appends them to a \code{pa_realtime} table in a
+#' DuckDB database. Intended to be run on a schedule to build up a time-series
+#' database for use with \code{\link{pa_preprocess}}.
 #'
-#' @returns
+#' @param nwlng Northwest longitude of the bounding box. Default is \code{-124.41}.
+#' @param nwlat Northwest latitude of the bounding box. Default is \code{42.01}.
+#' @param selng Southeast longitude of the bounding box. Default is \code{-114.13}.
+#' @param selat Southeast latitude of the bounding box. Default is \code{32.53}.
+#' @param max_age Maximum age of sensor readings to retrieve, in seconds.
+#'   Default is \code{3600} (1 hour).
+#' @param key A PurpleAir READ API key. If \code{NULL}, reads from the
+#'   \code{PURPLEAIR_READ_KEY} environment variable.
+#' @param dbdir Path to the DuckDB database file. If \code{NULL}, defaults to
+#'   \code{"purpleair.duckdb"} in the working directory.
+#'
+#' @returns Called for its side effect of appending records to the DuckDB
+#'   database. Invisibly returns \code{NULL}.
 #' @export
 #'
 #' @examples
+#' \dontrun{
+#' # Run on a schedule (e.g., via cronR or taskscheduleR) to build a database
+#' pa_acquire_realtime(key = Sys.getenv("PURPLEAIR_READ_KEY"), dbdir = "purpleair.duckdb")
+#' }
 pa_acquire_realtime <- function(nwlng = -124.41, nwlat = 42.01, selng = -114.13, 
                                 selat = 32.53, max_age = 3600, key = NULL,
                                 dbdir = NULL) {
@@ -156,12 +186,15 @@ pa_acquire_realtime <- function(nwlng = -124.41, nwlat = 42.01, selng = -114.13,
 #'   latitude, and longitude for all sensors within the specified bounding box.
 #' @export
 #'
-#' @examples # CA Bounding Box
-#' nwlng <- -124.41
-#' nwlat <- 42.01
-#' selng <- -114.13
-#' selat <- 32.53
-#' pa_find_sensors(nwlng, nwlat, selng, selat, key = my_api_key)
+#' @examples
+#' \dontrun{
+#' # California bounding box
+#' pa_find_sensors(
+#'   nwlng = -124.41, nwlat = 42.01,
+#'   selng = -114.13, selat = 32.53,
+#'   key = Sys.getenv("PURPLEAIR_READ_KEY")
+#' )
+#' }
 pa_find_sensors <- function(nwlng, nwlat, selng, selat, key) {
 
   query_string <- list(
@@ -204,10 +237,18 @@ pa_find_sensors <- function(nwlng, nwlat, selng, selat, key) {
 #' @param date The date to retrieve
 #' @param timezone The sensor local time zone (default is "America/Los_Angeles")
 #'
-#' @return A data frame for a single sensor
+#' @return A data frame with columns \code{sensor_index}, \code{time_stamp}, and
+#'   \code{pm2.5_atm}, or \code{NULL} if no data is available or an API error occurs.
 #' @export
 #'
 #' @examples
+#' \dontrun{
+#' pa_sensor_history_daily(
+#'   sensor_index = 12345,
+#'   date = "2024-11-15",
+#'   key = Sys.getenv("PURPLEAIR_READ_KEY")
+#' )
+#' }
 pa_sensor_history_daily <- function(sensor_index, date, timezone = "America/Los_Angeles", key) {
   
   # Convert to UTC datetime
@@ -254,8 +295,33 @@ pa_sensor_history_daily <- function(sensor_index, date, timezone = "America/Los_
 
 }
 
-# takes a df from pa_sensor_history_daily and a df from pa_find_sensors to construct a
-# spatvector of purpleair data for modeling and save as RDS
+#' Process daily PurpleAir sensor history into a spatial dataset
+#'
+#' Takes raw hourly sensor data from \code{\link{pa_sensor_history_daily}} and sensor
+#' metadata from \code{\link{pa_find_sensors}}, computes daily mean PM2.5, log-transforms
+#' it, and returns a projected SpatVector saved to disk. Only single-day inputs are
+#' supported.
+#'
+#' @param pa_raw A data frame of raw hourly PurpleAir data as returned by
+#'   \code{\link{pa_sensor_history_daily}}, containing \code{sensor_index},
+#'   \code{time_stamp}, and \code{pm2.5_atm} columns.
+#' @param pa_sensors A data frame of sensor metadata as returned by
+#'   \code{\link{pa_find_sensors}}, containing \code{sensor_index}, \code{latitude},
+#'   and \code{longitude} columns.
+#' @param timezone Local timezone string used to assign the correct calendar day.
+#'   Default is \code{"America/Los_Angeles"}.
+#' @param clean_outliers Logical. If \code{TRUE}, apply spatial outlier removal via
+#'   \code{pa_clean_spatial_outliers}. Default is \code{TRUE}.
+#' @param crs Coordinate reference system string passed to \code{terra::project}.
+#'   Default is \code{"EPSG:3395"}.
+#' @param output_path Directory path where the processed RDS file will be saved.
+#'   Default is \code{"./processed_data/purpleair/"}.
+#'
+#' @returns A \code{SpatVector} with daily mean PM2.5 (\code{PM25_daily}) and its
+#'   log-transform (\code{PM25_log}), projected to \code{crs}. The object is also
+#'   saved to \code{output_path} as \code{purpleair_processed_YYYY-MM-DD.RDS}.
+#'
+#' @seealso \code{\link{pa_sensor_history_daily}}, \code{\link{pa_find_sensors}}
 pa_process_daily <- function(pa_raw, pa_sensors, timezone = "America/Los_Angeles",
                              clean_outliers = TRUE,
                              crs = "EPSG:3395",
@@ -302,13 +368,20 @@ pa_process_daily <- function(pa_raw, pa_sensors, timezone = "America/Los_Angeles
 
 }
 
-# like purpleair_clean_spatial_outliers, but using the newer spatial libraries and updated
-# field names. Some updates on the algorithm. Not convert to log before applying tests.
-# Increased search distance from 10km to 20km. New test is z-score. Also fail any
-# locations where their are no neighbors within the radius and value of PM25_log > 7
-# (~1000 ug/m3)
-
-# New version here assumes that there is only one day in the spatv
+#' Remove spatial outliers from a PurpleAir SpatVector
+#'
+#' Identifies and removes outlier sensors using a neighborhood z-score approach.
+#' For each sensor, neighbors within 20 km are found and a z-score is computed from
+#' the log-transformed PM2.5 values of those neighbors. Sensors with
+#' \eqn{|z| \geq 1.5} are flagged as outliers. Isolated sensors (no neighbors within
+#' 20 km) with \code{PM25_log > 7} (~1000 µg/m³) are also removed.
+#'
+#' @param spatv A \code{SpatVector} for a single day containing a \code{PM25_log}
+#'   column of log-transformed PM2.5 values.
+#'
+#' @returns A \code{SpatVector} with outlier sensors removed.
+#'
+#' @seealso \code{\link{pa_preprocess}}, \code{\link{pa_process_daily}}
 pa_clean_spatial_outliers <- function(spatv) {
 
   region_stats2 <- function(ind, var) {
@@ -343,10 +416,14 @@ pa_clean_spatial_outliers <- function(spatv) {
 #'
 #' @param key A PurpleAir API key
 #'
-#' @return The type of API key. Either "READ" or "WRITE"
+#' @return A string indicating the key type: \code{"READ"} or \code{"WRITE"}.
+#'   Stops with an error message if the key is invalid.
 #' @export
 #'
 #' @examples
+#' \dontrun{
+#' pa_check_api_key(Sys.getenv("PURPLEAIR_READ_KEY"))
+#' }
 pa_check_api_key <- function(key) {
   
   query_string <- list(

@@ -2,7 +2,7 @@
 % Please edit documentation in R/purpleair.R
 \name{pa_acquire_realtime}
 \alias{pa_acquire_realtime}
-\title{Title}
+\title{Acquire realtime PurpleAir sensor readings into a DuckDB database}
 \usage{
 pa_acquire_realtime(
   nwlng = -124.41,
@@ -15,20 +15,36 @@ pa_acquire_realtime(
 )
 }
 \arguments{
-\item{nwlng}{}
+\item{nwlng}{Northwest longitude of the bounding box. Default is \code{-124.41}.}
 
-\item{nwlat}{}
+\item{nwlat}{Northwest latitude of the bounding box. Default is \code{42.01}.}
 
-\item{selng}{}
+\item{selng}{Southeast longitude of the bounding box. Default is \code{-114.13}.}
 
-\item{selat}{}
+\item{selat}{Southeast latitude of the bounding box. Default is \code{32.53}.}
 
-\item{max_age}{}
+\item{max_age}{Maximum age of sensor readings to retrieve, in seconds.
+Default is \code{3600} (1 hour).}
 
-\item{key}{}
+\item{key}{A PurpleAir READ API key. If \code{NULL}, reads from the
+\code{PURPLEAIR_READ_KEY} environment variable.}
 
-\item{dbdir}{}
+\item{dbdir}{Path to the DuckDB database file. If \code{NULL}, defaults to
+\code{"purpleair.duckdb"} in the working directory.}
+}
+\value{
+Called for its side effect of appending records to the DuckDB
+  database. Invisibly returns \code{NULL}.
 }
 \description{
-Title
+Fetches the most recent PM2.5 readings for all sensors within a bounding box
+from the PurpleAir API and appends them to a \code{pa_realtime} table in a
+DuckDB database. Intended to be run on a schedule to build up a time-series
+database for use with \code{\link{pa_preprocess}}.
+}
+\examples{
+\dontrun{
+# Run on a schedule (e.g., via cronR or taskscheduleR) to build a database
+pa_acquire_realtime(key = Sys.getenv("PURPLEAIR_READ_KEY"), dbdir = "purpleair.duckdb")
+}
 }

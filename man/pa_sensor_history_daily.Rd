@@ -24,11 +24,21 @@ pa_sensor_history_daily(
 \item{key}{A PurpleAir API read key with access to historical data}
 }
 \value{
-A data frame for a single sensor
+A data frame with columns \code{sensor_index}, \code{time_stamp}, and
+  \code{pm2.5_atm}, or \code{NULL} if no data is available or an API error occurs.
 }
 \description{
 Get the historical data for a specific PurpleAir sensor for a single local day. This
 requires a PurpleAir API key with access to historical data, which can be requested.
 For multiple days, use pa_sensor_history. This function specifies the exact hours
 needed in local time to avoid additional request costs.
+}
+\examples{
+\dontrun{
+pa_sensor_history_daily(
+  sensor_index = 12345,
+  date = "2024-11-15",
+  key = Sys.getenv("PURPLEAIR_READ_KEY")
+)
+}
 }

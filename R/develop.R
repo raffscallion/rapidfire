@@ -2,19 +2,65 @@
 
 # Start with daily processed data on disk
 
-#' Title
+#' Develop a random forest model for PM2.5 estimation
 #'
-#' @param dt1 
-#' @param dt2 
-#' @param paths 
-#' @param test_extent 
-#' @param pa_nmax 
-#' @param seed 
+#' Trains a random forest model for estimating surface-level PM2.5 over a date range using
+#' preprocessed inputs from regulatory and temporary monitors, PurpleAir sensors, HRRR
+#' meteorology, and MAIAC AOD. Monitors are split into training and test sets; kriged
+#' estimates from the training monitors and PurpleAir sensors are computed at the test
+#' locations along with co-located HRRR and MAIAC values. A random forest is then trained
+#' using 10-fold cross-validation with \code{mtry} tuning. The function returns the fitted
+#' model and variogram models needed for prediction and validation.
 #'
-#' @returns
+#' @param dt1 A \code{Date} or date-coercible character string giving the first day of the
+#'   training period (inclusive).
+#' @param dt2 A \code{Date} or date-coercible character string giving the last day of the
+#'   training period (inclusive).
+#' @param paths A named list of directory paths with the following elements:
+#'   \describe{
+#'     \item{monitors}{Directory containing combined monitor RDS files
+#'       (\code{monitors_combined_YYYY-MM-DD.RDS}).}
+#'     \item{purpleair}{Directory containing preprocessed PurpleAir RDS files.}
+#'     \item{hrrr}{Directory containing preprocessed HRRR GeoTIFF files.}
+#'     \item{maiac}{Directory containing preprocessed MAIAC GeoTIFF files.}
+#'   }
+#' @param test_extent An optional \code{SpatVector} or \code{SpatExtent} used to restrict
+#'   monitors to a specific region before model training. If \code{NULL}, all monitors are
+#'   used.
+#' @param pa_nmax Maximum number of nearest PurpleAir neighbors to use when kriging sensor
+#'   estimates to monitor locations. Default is \code{100}.
+#' @param seed Integer random seed for monitor splitting and model training. Default is
+#'   \code{1977}.
+#'
+#' @returns A named list with three elements:
+#'   \describe{
+#'     \item{model}{The final fitted \code{randomForest} model object.}
+#'     \item{vgm_mon}{A pooled \code{variogramModel} fitted to regulatory monitor
+#'       data, for use in \code{\link{predict_grid}} and
+#'       \code{\link{daily_cross_validate}}.}
+#'     \item{vgm_pa}{A pooled \code{variogramModel} fitted to PurpleAir sensor
+#'       data, for use in \code{\link{predict_grid}} and
+#'       \code{\link{daily_cross_validate}}.}
+#'   }
 #' @export
 #'
+#' @seealso \code{\link{predict_grid}}, \code{\link{daily_cross_validate}},
+#'   \code{\link{monitors_variogram_pooled}}, \code{\link{monitors_split}}
+#'
 #' @examples
+#' \dontrun{
+#' model_list <- develop_model(
+#'   dt1 = "2024-10-01",
+#'   dt2 = "2024-11-30",
+#'   paths = list(
+#'     monitors  = "./processed_data/monitors/",
+#'     purpleair = "./processed_data/purpleair/",
+#'     hrrr      = "./processed_data/HRRR/",
+#'     maiac     = "./processed_data/MAIAC/"
+#'   )
+#' )
+#' saveRDS(model_list, "./models/rapidfire_model.RDS")
+#' }
 develop_model <- function(dt1, dt2, paths, test_extent = NULL, pa_nmax = 100, seed = 1977) {
   
   dates <- seq.Date(as.Date(dt1), as.Date(dt2), by = "1 day")
@@ -88,7 +134,7 @@ develop_model <- function(dt1, dt2, paths, test_extent = NULL, pa_nmax = 100, se
   
   # get daily interpolated sensor values at the test locations
   pa_krig <- purrr::map(dates, \(x) daily_interpolation(x, pa, mon_split$test, vgm_pa,
-                                                        nmax = 100)) |>
+                                                        nmax = pa_nmax)) |>
     purrr::list_rbind() |>
     rename(PM25_log_PAK=var1.pred) |>
     select(-var1.var)

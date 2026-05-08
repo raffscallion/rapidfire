@@ -2,19 +2,73 @@
 % Please edit documentation in R/predict.R
 \name{predict_grid}
 \alias{predict_grid}
-\title{Title}
+\title{Predict gridded PM2.5 concentrations for a single day}
 \usage{
 predict_grid(dt, grid_file, model_file, paths)
 }
 \arguments{
-\item{dt}{}
+\item{dt}{A \code{Date} or date-coercible character string specifying the day to
+predict.}
 
-\item{grid_file}{}
+\item{grid_file}{Path to a GeoTIFF file defining the prediction grid (CRS, extent,
+and resolution). Loaded with \code{terra::rast}.}
 
-\item{model_file}{}
+\item{model_file}{Path to an RDS file containing a named list with elements:
+\describe{
+  \item{model}{A fitted random forest model (e.g., from \code{\link{develop_model}}).}
+  \item{vgm_mon}{A \code{variogramModel} for regulatory monitor kriging.}
+  \item{vgm_pa}{A \code{variogramModel} for PurpleAir sensor kriging
+    (\code{nmax = 100}).}
+}}
 
-\item{paths}{}
+\item{paths}{A named list of directory paths with the following elements:
+\describe{
+  \item{monitors}{Directory containing combined monitor RDS files
+    (\code{monitors_combined_YYYY-MM-DD.RDS}).}
+  \item{hrrr}{Directory containing preprocessed HRRR GeoTIFF files.}
+  \item{maiac}{Directory containing preprocessed MAIAC GeoTIFF files.}
+  \item{purpleair}{Directory containing preprocessed PurpleAir RDS files.}
+  \item{output}{Directory where the output GeoTIFF will be saved.}
+}}
+}
+\value{
+A multi-layer \code{SpatRaster} on the \code{grid_file} grid with layers:
+  \describe{
+    \item{PM25_RF}{Random forest PM2.5 prediction (µg/m³, linear scale).}
+    \item{PM25_log_RF}{Random forest PM2.5 prediction (log scale).}
+    \item{PM25_log_ANK}{Kriged regulatory monitor estimate (log scale).}
+    \item{PM25_log_PAK}{Kriged PurpleAir estimate (log scale).}
+    \item{MASSDEN_log, HPBL, RH, UGRD, VGRD, TMP, APCP}{HRRR meteorological
+      predictors.}
+    \item{MAIAC_AOD}{MAIAC aerosol optical depth.}
+  }
+  The raster is also written to \code{paths[["output"]]} as
+  \code{rapidfire_YYYY-MM-DD.tif}.
 }
 \description{
-Title
+Assembles all predictor layers for a given date — kriged regulatory and temprorary monitor
+estimates (ANK), kriged PurpleAir estimates (PAK), HRRR meteorological variables,
+and MAIAC AOD — and applies a pre-trained random forest model to generate a
+gridded PM2.5 surface. Both log-scale and linear-scale predictions are included
+in the output stack alongside all input predictor layers.
+}
+\examples{
+\dontrun{
+result <- predict_grid(
+  dt = "2024-11-15",
+  grid_file = "./grid/prediction_grid.tif",
+  model_file = "./models/rapidfire_model.RDS",
+  paths = list(
+    monitors  = "./processed_data/monitors/",
+    hrrr      = "./processed_data/HRRR/",
+    maiac     = "./processed_data/MAIAC/",
+    purpleair = "./processed_data/purpleair/",
+    output    = "./output/"
+  )
+)
+}
+}
+\seealso{
+\code{\link{hrrr_stack}}, \code{\link{monitors_krige_grid}},
+  \code{\link{maiac_regrid}}
 }
