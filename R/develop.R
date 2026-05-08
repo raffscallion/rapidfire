@@ -1,8 +1,20 @@
-# New functions for developing models - can rewrite this because original versions are in
-# develop_old.R
+# New functions for developing models
 
 # Start with daily processed data on disk
 
+#' Title
+#'
+#' @param dt1 
+#' @param dt2 
+#' @param paths 
+#' @param test_extent 
+#' @param pa_nmax 
+#' @param seed 
+#'
+#' @returns
+#' @export
+#'
+#' @examples
 develop_model <- function(dt1, dt2, paths, test_extent = NULL, pa_nmax = 100, seed = 1977) {
   
   dates <- seq.Date(as.Date(dt1), as.Date(dt2), by = "1 day")

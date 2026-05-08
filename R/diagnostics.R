@@ -1,5 +1,17 @@
 # Daily diagnostic plots
 
+#' Title
+#'
+#' @param dt 
+#' @param data_path 
+#' @param validation_path 
+#' @param monitor_path 
+#' @param state 
+#'
+#' @returns
+#' @export
+#'
+#' @examples
 daily_map <- function(dt, data_path, validation_path, monitor_path, state = NULL) {
   
   rf_file <- fs::path_join(c(data_path, paste0("rapidfire_", dt, ".tif")))

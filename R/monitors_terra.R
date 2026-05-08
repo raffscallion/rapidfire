@@ -152,9 +152,4 @@ monitors_split <- function(mon, test_fraction = 0.3, seed = NULL) {
   list(test=test, train=train)
   
 }
- 
-# test_locs <- tibble(id = 1:3,
-#                     lon = c(-121.72693, -122.58036, -117.91731),
-#                     lat = c(38.54058, 37.92791, 33.81088))
-# test_locs <- sf::st_as_sf(test_locs, coords = c("lon", "lat"), crs = sf::st_crs(4326))
-# test_locs <- sf::st_transform(test_locs, crs = sf::st_crs(3395))
+
