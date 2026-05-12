@@ -2,11 +2,10 @@
 
 **R**elatively **A**ccurate **P**articulate **I**nformation **D**erived **F**rom **I**nformation **R**etrieved **E**asily
 
-`rapidfire` estimates surface-level PM2.5 concentrations by fusing regulatory air
-quality monitors, low-cost PurpleAir sensors, satellite aerosol retrievals, and
-meteorological model output using a random forest regression. It is designed for
-operational near-real-time use during wildfire smoke episodes, but is equally
-applicable to retrospective analysis.
+`rapidfire` estimates daily surface-level PM2.5 concentrations by fusing routine and temporary air
+quality monitors, low-cost sensors, satellite aerosol retrievals, and
+meteorological model output using a random forest regression. It can be used for
+operational near-real-time (previous day) estimates or for retrospective analysis.
 
 ---
 
@@ -14,10 +13,10 @@ applicable to retrospective analysis.
 
 | Source | Variable | Function |
 |---|---|---|
-| [AirNow](https://www.airnow.gov) file archive | 24-hr PM2.5 (regulatory monitors) | `airnow_acquire()` |
-| [AIRSIS / WRCC](https://github.com/MazamaScience/AirMonitor) (via AirMonitor) | 24-hr PM2.5 (temporary monitors) | `temp_monitors_acquire()` |
-| [PurpleAir](https://www.purpleair.com) API | Real-time / historical PM2.5 (low-cost sensors) | `pa_acquire_realtime()`, `pa_preprocess()` |
-| [HRRR-Smoke](https://rapidrefresh.noaa.gov/hrrr/) (NOAA S3) | Boundary layer height, wind, humidity, smoke mass density, precipitation | `hrrr_acquire()` |
+| [AirNow](https://www.airnow.gov) file archive | Hourly PM2.5 (air agency monitors) | `airnow_acquire()` |
+| [AIRSIS / WRCC](https://github.com/MazamaScience/AirMonitor) (via AirMonitor) | Hourly PM2.5 (temporary monitors) | `temp_monitors_acquire()` |
+| [PurpleAir](https://www.purpleair.com) API | Estimated PM2.5 (low-cost sensors) | `pa_acquire_realtime()`, `pa_preprocess()` |
+| [HRRR-Smoke](https://rapidrefresh.noaa.gov/hrrr/) (NOAA S3) | Boundary layer height, temperature, winds, humidity, smoke mass density, precipitation | `hrrr_acquire()` |
 | [MAIAC AOD](https://lpdaac.usgs.gov/products/mcd19a2v061/) MCD19A2 (NASA EarthData) | 470 nm aerosol optical depth | `maiac_acquire()`, `maiac_preprocess()` |
 
 ---
@@ -26,7 +25,7 @@ applicable to retrospective analysis.
 
 ```r
 # install.packages("pak")
-pak::pkg_install("sraffuse/rapidfire")
+pak::pkg_install("raffscallion/rapidfire")
 ```
 
 ### Prerequisites
@@ -36,18 +35,16 @@ pak::pkg_install("sraffuse/rapidfire")
   variables `EARTHDATA_USER` and `EARTHDATA_PASSWORD` (e.g., in `.Renviron`).
 - **PurpleAir API key** — required for sensor data acquisition.
   Request a key at <https://community.purpleair.com/t/creating-api-keys/3951>.
-  Store as `PURPLEAIR_READ_KEY` in `.Renviron`.
-- **Prediction grid** — a `SpatRaster` GeoTIFF defining the target CRS, extent,
-  and resolution for model output. The grid used for California is available
-  separately (see below).
+  Store as `PURPLEAIR_READ_KEY` in `.Renviron`. Alternately, a source of PurpleAir data.
 
 ---
 
 ## Workflow
 
 The package supports three main stages: **model development**, **daily
-prediction**, and **leave-one-out validation**. Each stage reads from and writes
-to a set of directories passed as a named `paths` list.
+prediction**, and **validation**. Each stage reads from and writes
+to a set of directories passed as a named `paths` list. You can change the paths to 
+suit your environment, but the names must be as listed here.
 
 ### 1. Set up paths
 
@@ -203,6 +200,7 @@ Results are saved as `rapidfire_l-o-o_YYYY-MM-DD.csv`.
 | `monitors_krige_grid()` | Krige PM2.5 values onto a prediction grid |
 | `monitors_krige_points()` | Krige PM2.5 values at point locations |
 | `monitors_split()` | Split monitor data into train/test sets |
+| `grid_state()` | Create an output modeling grid based on a spatial extent (such as a state) |
 | `pa_check_api_key()` | Verify a PurpleAir API key |
 | `hrrr_stack()` | Load preprocessed HRRR variables into a stacked SpatRaster |
 

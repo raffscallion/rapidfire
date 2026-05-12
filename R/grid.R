@@ -24,18 +24,20 @@
 #   return(grid)
 # }
 
-# updated version of make_state_grid using terra. Creates a grid of the given cellsize (in
-# m) that completely covers the input spatial vector
-#' Title
+#' Creates a grid of the given cellsize (in m) that completely covers the input spatial
+#' vector. It uses the standard rapidfire coordinate system of epsg:3395.
 #'
-#' @param spat_vec 
-#' @param filename 
-#' @param cellsize 
 #'
-#' @returns
+#' @param spat_vec A spatial vector that defines the domain for the output grid
+#' @param filename The filename for the output grid 
+#' @param cellsize The cell size in meters of the output grid (default = 1000 m, 1 km)
+#'
+#' @returns This function is used for the side-effect of writing the grid to a file
 #' @export
 #'
-#' @examples
+#' @examples 
+#' \dontrun{
+#' grid_state(california_shapefile, "output_grid_1km", cellsize = 1000)
 grid_state <- function(spat_vec, filename, cellsize = 1000) {
   
   outline <- terra::project(spat_vec, "epsg:3395")

@@ -2,17 +2,22 @@
 % Please edit documentation in R/grid.R
 \name{grid_state}
 \alias{grid_state}
-\title{Title}
+\title{Creates a grid of the given cellsize (in m) that completely covers the input spatial
+vector. It uses the standard rapidfire coordinate system of epsg:3395.}
 \usage{
 grid_state(spat_vec, filename, cellsize = 1000)
 }
 \arguments{
-\item{spat_vec}{}
+\item{spat_vec}{A spatial vector that defines the domain for the output grid}
 
-\item{filename}{}
+\item{filename}{The filename for the output grid}
 
-\item{cellsize}{}
+\item{cellsize}{The cell size in meters of the output grid (default = 1000 m, 1 km)}
+}
+\value{
+This function is used for the side-effect of writing the grid to a file
 }
 \description{
-Title
+Creates a grid of the given cellsize (in m) that completely covers the input spatial
+vector. It uses the standard rapidfire coordinate system of epsg:3395.
 }
