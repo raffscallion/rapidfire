@@ -1,5 +1,7 @@
 # Create an empty purpleair duckdb database table
 
+library(dplyr)
+
 # table structure
 pa_table <- tibble(sensor_index = numeric(0),
                       last_seen = lubridate::POSIXct(),
