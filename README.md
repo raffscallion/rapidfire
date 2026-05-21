@@ -70,6 +70,8 @@ them daily (e.g., with `cronR` or `taskscheduleR`).
 library(rapidfire)
 
 date <- "2024-11-15"
+
+# Load the grid definition as created by rapidfire::grid_state()
 grid <- terra::rast("./grid/prediction_grid.tif")
 
 # Regulatory monitors (AirNow)
@@ -78,8 +80,9 @@ airnow_acquire(date, output_path = paths[["airnow"]])
 # Temporary monitors (AIRSIS / WRCC)
 temp_monitors_acquire(date, output_path = paths[["temp_monitors"]])
 
-# Combine monitor sources and clip to domain
-extent <- terra::vect("./grid/domain_extent.gpkg")
+# Combine monitor sources and optionally clip to an extent
+# Here I loaded a pregenerated extent of 100 km around CA saved as a SpatVector
+extent <- terra::readRDS("./extents/ca_100km_buffer.RDS")
 monitors_combine(date,
   input_path_airnow        = paths[["airnow"]],
   input_path_temp_monitors = paths[["temp_monitors"]],
