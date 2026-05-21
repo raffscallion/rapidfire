@@ -128,13 +128,13 @@ pa_preprocess <- function(dt, duckdb_path, sensors, location_types = 0,
 #' }
 pa_acquire_realtime <- function(nwlng = -124.41, nwlat = 42.01, selng = -114.13, 
                                 selat = 32.53, max_age = 3600, key = NULL,
-                                dbdir = NULL) {
+                                dbdir = "./purpleair.duckdb") {
 
   if (is.null(key)) {
     key <- Sys.getenv("PURPLEAIR_READ_KEY")
   }
   
-  con <- DBI::dbConnect(duckdb::duckdb(), dbdir = "purpleair.duckdb")
+  con <- DBI::dbConnect(duckdb::duckdb(), dbdir = dbdir)
   
   url <- "https://api.purpleair.com/v1/sensors/"
   
