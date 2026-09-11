@@ -111,6 +111,14 @@ daily_cross_validate <- function(dt, model_file, paths) {
   mon_maiac <- terra::project(mon, maiac_crs)
   maiac_extracted <- terra::extract(maiac, mon_maiac)
   
+  # Get median value to fill NAs
+  maiac_median <- terra::global(maiac, fun = median, na.rm = TRUE) %>%
+    .$global
+  
+  # Use median to fill NAs
+  maiac_extracted <- maiac_extracted |>
+    tidyr::replace_na(list(MAIAC_AOD = maiac_median))
+  
   # load sensor data
   ### Sensor data will be coming from CDPH? Need non-cdph way as well
   pa_file <- fs::path_join(c(paths[["purpleair"]],
