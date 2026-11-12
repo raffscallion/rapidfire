@@ -1,5 +1,5 @@
 
-# Functions for handling monitor data, updated to use terra rather than sp.
+# Functions for handling monitor data.
 # Spatial functions here also work on purpleair sensor data.
 
 #' Combine AirNow and temporary monitor data for a single day
