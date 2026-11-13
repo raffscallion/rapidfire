@@ -8,7 +8,7 @@
 #' Downloads AIRSIS and WRCC temporary monitor data via the \pkg{AirMonitor} package,
 #' selects the appropriate archive tier based on how recent the requested date is
 #' (latest < 10 days, daily < 45 days, annual otherwise), computes 24-hour average
-#' PM2.5, and returns a projected \code{SpatVector} saved to disk. Only monitors with
+#' PM2.5, and returns a projected \code{SpatVector}. Only monitors with
 #' at least 16 hours of valid observations are retained.
 #'
 #' @param date A \code{Date} or date-coercible character string specifying the day
@@ -18,8 +18,6 @@
 #'   available monitors are retained.
 #' @param timezone Local timezone string used to assign observations to the correct
 #'   calendar day. Default is \code{"America/Los_Angeles"}.
-#' @param output_path Directory path where the processed RDS file will be saved.
-#'   Default is \code{"./processed_data/temp_monitors/"}.
 #' @param crs Coordinate reference system string passed to \code{terra::project}.
 #'   Default is \code{"EPSG:3395"}.
 #'
@@ -27,8 +25,7 @@
 #'   \code{monitorID} (device deployment ID), \code{Day} (date), \code{PM25}
 #'   (24-hour mean PM2.5), \code{Hours} (number of hourly observations used),
 #'   and \code{PM25_log} (log-transformed PM2.5). Returns \code{NULL} if no
-#'   monitors with sufficient data are found. Also written to \code{output_path}
-#'   as \code{temp_monitors_pm25_24hr_YYYY-MM-DD.RDS}.
+#'   monitors with sufficient data are found.
 #' @export
 #'
 #' @seealso \code{\link{monitors_combine}}, \code{\link{airnow_acquire}}
@@ -38,7 +35,6 @@
 #' temp_monitors_acquire("2024-11-15", states = c("CA", "OR", "NV"))
 #' }
 temp_monitors_acquire <- function(date, states = NULL, timezone = "America/Los_Angeles",
-                                  output_path = "./processed_data/temp_monitors/",
                                   crs = "EPSG:3395") {
   
   dt <- as.Date(date)
@@ -64,12 +60,16 @@ temp_monitors_acquire <- function(date, states = NULL, timezone = "America/Los_A
   }
   
   spat <- temp_monitors_preprocess(mon, crs, timezone)
+
+}
+
+
+temp_monitors_acquire_write <- function(spat, fname, 
+                                   output_path = "./processed_data/temp_monitors/") {
   
-  fname <- paste0("temp_monitors_pm25_24hr_", strftime(date, "%Y-%m-%d"), ".RDS")
   fname <- fs::path_join(c(output_path, fname))
   terra::saveRDS(spat, fname)
-  spat
-
+  
 }
 
 #' Convert an AirMonitor \code{mts_monitor} object to a projected SpatVector

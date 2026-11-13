@@ -38,6 +38,7 @@
 #' @examples 
 #' \dontrun{
 #' grid_state(california_shapefile, "output_grid_1km", cellsize = 1000)
+#' }
 grid_state <- function(spat_vec, filename, cellsize = 1000) {
   
   outline <- terra::project(spat_vec, "epsg:3395")

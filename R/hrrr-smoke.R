@@ -30,10 +30,7 @@
 #' \dontrun{
 #' hrrr_acquire("2024-11-15", outpath = "./raw_data/HRRR/", extent_grid = grid)
 #' }
-hrrr_acquire <- function(date, outpath, extent_grid,
-                                   tz = "America/Los_Angeles",
-                                   crs = "EPSG:3395",
-                                   delete_files = FALSE) {
+hrrr_acquire <- function(date, outpath, tz = "America/Los_Angeles") {
   
   # determine files needed for 24-hr average over local diurnal time
   start_time <- ISOdate(lubridate::year(date), lubridate::month(date),
@@ -50,9 +47,15 @@ hrrr_acquire <- function(date, outpath, extent_grid,
   files <- purrr::map2_chr(dt_str, hr_str, \(x, y) hrrr_download(x, y, outpath),
                            .progress = TRUE)
 
+}
+
+hrrr_preprocess <- function(date, files, outpath, extent_grid, crs = "EPSG:3395",
+                            delete_grib = FALSE) {
+  
   # Calculate the 24-hr average, one layer at a time for all layers but precip
   cropped_rasters <- purrr::map(files, \(x) hrrr_subset(x, extent_grid))
   layers <- c("HPBL", "RH", "UGRD", "VGRD", "TMP", "MASSDEN")
+  
   for (lay in layers) {
     mean_raster <- calculate_layer_mean(cropped_rasters, layer = lay)
     mean_raster <- terra::project(mean_raster, crs)
@@ -68,7 +71,7 @@ hrrr_acquire <- function(date, outpath, extent_grid,
   filename <- fs::path_join(c(outpath, filename))
   terra::writeRaster(accum_raster, filename, overwrite = TRUE)
   
-  if (delete_files) {
+  if (delete_grib) {
     # Delete the grib files
     fs::file_delete(files)
     # Also delete the idx files
@@ -77,6 +80,7 @@ hrrr_acquire <- function(date, outpath, extent_grid,
   }
   
 }
+
 
 #' Download a single HRRR-smoke GRIB2 file from the NOAA S3 archive
 #'

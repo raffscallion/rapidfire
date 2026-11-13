@@ -21,3 +21,8 @@ This function is used for the side-effect of writing the grid to a file
 Creates a grid of the given cellsize (in m) that completely covers the input spatial
 vector. It uses the standard rapidfire coordinate system of epsg:3395.
 }
+\examples{
+\dontrun{
+grid_state(california_shapefile, "output_grid_1km", cellsize = 1000)
+}
+}

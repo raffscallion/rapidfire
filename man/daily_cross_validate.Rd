@@ -4,28 +4,28 @@
 \alias{daily_cross_validate}
 \title{Leave-one-out cross-validation of daily PM2.5 predictions}
 \usage{
-daily_cross_validate(dt, model_file, paths)
+daily_cross_validate(dt, mon, models, hrrr, maiac, pa)
 }
 \arguments{
 \item{dt}{A \code{Date} or date-coercible character string specifying the day to
 validate.}
 
-\item{model_file}{Path to an RDS file containing a named list with elements:
+\item{mon}{A \code{SpatVector} of monitor observations for the day, with
+\code{monitorID}, \code{Day}, \code{PM25_log}, and \code{source} columns.}
+
+\item{models}{A named list with elements:
 \describe{
   \item{model}{A fitted random forest model (e.g., from \code{\link{develop_model}}).}
   \item{vgm_mon}{A \code{variogramModel} for regulatory monitor kriging.}
   \item{vgm_pa}{A \code{variogramModel} for PurpleAir sensor kriging.}
 }}
 
-\item{paths}{A named list of directory paths with the following elements:
-\describe{
-  \item{monitors}{Directory containing combined monitor RDS files
-    (\code{monitors_combined_YYYY-MM-DD.RDS}).}
-  \item{hrrr}{Directory containing preprocessed HRRR GeoTIFF files.}
-  \item{maiac}{Directory containing preprocessed MAIAC GeoTIFF files.}
-  \item{purpleair}{Directory containing preprocessed PurpleAir RDS files.}
-  \item{cross_validation}{Directory where the output CSV will be saved.}
-}}
+\item{hrrr}{A \code{SpatRaster} of HRRR layers for the day (e.g., from
+\code{\link{hrrr_stack}}).}
+
+\item{maiac}{A \code{SpatRaster} of processed MAIAC AOD for the day.}
+
+\item{pa}{A \code{SpatVector} of processed PurpleAir sensors for the day.}
 }
 \value{
 A data frame with one row per monitor containing:
@@ -39,8 +39,7 @@ A data frame with one row per monitor containing:
       variables extracted at the monitor.}
     \item{PM25_log_RF}{Random forest PM2.5 prediction.}
   }
-  The data frame is also written to \code{paths[["cross_validation"]]} as
-  \code{rapidfire_l-o-o_YYYY-MM-DD.csv}.
+  Use \code{\link{daily_cross_validate_write}} to save the result as a CSV.
 }
 \description{
 Evaluates model performance for a single day using leave-one-out cross-validation
@@ -48,23 +47,21 @@ across all regulatory monitors. For each monitor, its observation is withheld an
 kriging is used to interpolate a PM2.5 estimate at that location from the remaining
 monitors. Predictor variables (HRRR meteorology, MAIAC AOD, kriged PurpleAir) are
 then extracted at each monitor location and fed into the pre-trained random forest
-model to generate a final PM2.5 prediction. Results are saved as a CSV.
+model to generate a final PM2.5 prediction.
 }
 \examples{
 \dontrun{
 results <- daily_cross_validate(
   dt = "2024-11-15",
-  model_file = "./models/rapidfire_model.RDS",
-  paths = list(
-    monitors       = "./processed_data/monitors/",
-    hrrr           = "./processed_data/HRRR/",
-    maiac          = "./processed_data/MAIAC/",
-    purpleair      = "./processed_data/purpleair/",
-    cross_validation = "./output/cross_validation/"
-  )
+  mon = mon,
+  models = readRDS("./models/rapidfire_model.RDS"),
+  hrrr = hrrr_stack("2024-11-15", "./processed_data/HRRR/"),
+  maiac = terra::rast("./processed_data/MAIAC/MAIAC_processed_2024-11-15.tif"),
+  pa = pa
 )
 }
 }
 \seealso{
-\code{\link{monitors_krige_points}}, \code{\link{hrrr_stack}}
+\code{\link{daily_cross_validate_write}},
+  \code{\link{monitors_krige_points}}, \code{\link{hrrr_stack}}
 }

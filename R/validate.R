@@ -6,25 +6,22 @@
 #' kriging is used to interpolate a PM2.5 estimate at that location from the remaining
 #' monitors. Predictor variables (HRRR meteorology, MAIAC AOD, kriged PurpleAir) are
 #' then extracted at each monitor location and fed into the pre-trained random forest
-#' model to generate a final PM2.5 prediction. Results are saved as a CSV.
+#' model to generate a final PM2.5 prediction.
 #'
 #' @param dt A \code{Date} or date-coercible character string specifying the day to
 #'   validate.
-#' @param model_file Path to an RDS file containing a named list with elements:
+#' @param mon A \code{SpatVector} of monitor observations for the day, with
+#'   \code{monitorID}, \code{Day}, \code{PM25_log}, and \code{source} columns.
+#' @param models A named list with elements:
 #'   \describe{
 #'     \item{model}{A fitted random forest model (e.g., from \code{\link{develop_model}}).}
 #'     \item{vgm_mon}{A \code{variogramModel} for regulatory monitor kriging.}
 #'     \item{vgm_pa}{A \code{variogramModel} for PurpleAir sensor kriging.}
 #'   }
-#' @param paths A named list of directory paths with the following elements:
-#'   \describe{
-#'     \item{monitors}{Directory containing combined monitor RDS files
-#'       (\code{monitors_combined_YYYY-MM-DD.RDS}).}
-#'     \item{hrrr}{Directory containing preprocessed HRRR GeoTIFF files.}
-#'     \item{maiac}{Directory containing preprocessed MAIAC GeoTIFF files.}
-#'     \item{purpleair}{Directory containing preprocessed PurpleAir RDS files.}
-#'     \item{cross_validation}{Directory where the output CSV will be saved.}
-#'   }
+#' @param hrrr A \code{SpatRaster} of HRRR layers for the day (e.g., from
+#'   \code{\link{hrrr_stack}}).
+#' @param maiac A \code{SpatRaster} of processed MAIAC AOD for the day.
+#' @param pa A \code{SpatVector} of processed PurpleAir sensors for the day.
 #'
 #' @returns A data frame with one row per monitor containing:
 #'   \describe{
@@ -37,43 +34,33 @@
 #'       variables extracted at the monitor.}
 #'     \item{PM25_log_RF}{Random forest PM2.5 prediction.}
 #'   }
-#'   The data frame is also written to \code{paths[["cross_validation"]]} as
-#'   \code{rapidfire_l-o-o_YYYY-MM-DD.csv}.
+#'   Use \code{\link{daily_cross_validate_write}} to save the result as a CSV.
 #' @export
 #'
-#' @seealso \code{\link{monitors_krige_points}}, \code{\link{hrrr_stack}}
+#' @seealso \code{\link{daily_cross_validate_write}},
+#'   \code{\link{monitors_krige_points}}, \code{\link{hrrr_stack}}
 #'
 #' @examples
 #' \dontrun{
 #' results <- daily_cross_validate(
 #'   dt = "2024-11-15",
-#'   model_file = "./models/rapidfire_model.RDS",
-#'   paths = list(
-#'     monitors       = "./processed_data/monitors/",
-#'     hrrr           = "./processed_data/HRRR/",
-#'     maiac          = "./processed_data/MAIAC/",
-#'     purpleair      = "./processed_data/purpleair/",
-#'     cross_validation = "./output/cross_validation/"
-#'   )
+#'   mon = mon,
+#'   models = readRDS("./models/rapidfire_model.RDS"),
+#'   hrrr = hrrr_stack("2024-11-15", "./processed_data/HRRR/"),
+#'   maiac = terra::rast("./processed_data/MAIAC/MAIAC_processed_2024-11-15.tif"),
+#'   pa = pa
 #' )
 #' }
-daily_cross_validate <- function(dt, model_file, paths) {
+daily_cross_validate <- function(dt, mon, models, hrrr, maiac, pa) {
   
-  # load monitoring data
-  monitoring_file <- fs::path_join(c(paths[["monitors"]], 
-                                     paste0("monitors_combined_",
-                                            strftime(dt, "%Y-%m-%d"),
-                                            ".RDS")))
-  mon <- terra::readRDS(monitoring_file)
-
+  
   # Remove any non-finite values
   mon <- mon[is.finite(mon$PM25_log),]
   
   # For each site, interpolate without it's data
   ids <- mon$monitorID
   
-    # load the variogram
-  models <- readRDS(model_file)
+  # load the variogram
   mon_vgm <- models$vgm_mon
   
   leave_out_interpolate <- function(id) {
@@ -91,9 +78,6 @@ daily_cross_validate <- function(dt, model_file, paths) {
                                       .progress = "Leave-one-out interpolation") |>
     purrr::list_rbind()
   
-  # load met and smoke data from hrrr
-  hrrr <- hrrr_stack(dt, paths[["hrrr"]])
-  
   # Convert MASSDEN to log scale
   massdenlog <- log(hrrr$MASSDEN)
   names(massdenlog) <- "MASSDEN_log"
@@ -101,12 +85,7 @@ daily_cross_validate <- function(dt, model_file, paths) {
   hrrr <- terra::subset(hrrr, which(names(hrrr)=="MASSDEN"), negate = TRUE)
   hrrr_extracted <- terra::extract(hrrr, mon)
   
-  # load satellite data
-  maiac_file <- fs::path_join(c(paths[["maiac"]],
-                                paste0("MAIAC_processed_", strftime(dt, "%Y-%m-%d"), ".tif")))
-  maiac <- terra::rast(maiac_file)
-  
-  # Extract at monitor points
+  # Extract MAIAC at monitor points
   maiac_crs <- terra::crs(maiac)
   mon_maiac <- terra::project(mon, maiac_crs)
   maiac_extracted <- terra::extract(maiac, mon_maiac)
@@ -119,18 +98,10 @@ daily_cross_validate <- function(dt, model_file, paths) {
   maiac_extracted <- maiac_extracted |>
     tidyr::replace_na(list(MAIAC_AOD = maiac_median))
   
-  # load sensor data
-  ### Sensor data will be coming from CDPH? Need non-cdph way as well
-  pa_file <- fs::path_join(c(paths[["purpleair"]],
-                             paste0("purpleair_processed_",
-                                    strftime(dt, "%Y-%m-%d"),
-                                    ".RDS")))
-  pa <- terra::readRDS(pa_file)
-
   # interpolate to monitor points
   pa_vgm <- models$vgm_pa
   pak <- monitors_krige_points(pa, mon, pa_vgm, nmax = 100)
-
+  
   # Compile and predict
   model_inputs <- as.data.frame(mon) |>
     select(monitorID, Day, PM25_log, source) |>
@@ -144,18 +115,36 @@ daily_cross_validate <- function(dt, model_file, paths) {
   
   model <- models$model
   pred <- predict(model, model_inputs)
-    
+  
   # combine with observed inputs and return
   results <- model_inputs
   results$PM25_log_RF <- pred
-  
-  # Export file
-  outfile <- fs::path_join(c(paths[["cross_validation"]], 
-                             paste0("rapidfire_l-o-o_", 
-                                    strftime(dt, format = "%Y-%m-%d"), ".csv")))
-  readr::write_csv(results, outfile)
-  
+
   return(results)
 }
 
-
+#' Write leave-one-out cross-validation results to CSV
+#'
+#' Saves the output of \code{\link{daily_cross_validate}} as
+#' \code{rapidfire_l-o-o_YYYY-MM-DD.csv}.
+#'
+#' @param results A data frame returned by \code{\link{daily_cross_validate}}.
+#' @param dt A \code{Date} or date-coercible character string for the validated day,
+#'   used in the file name.
+#' @param output_path Directory where the CSV will be saved.
+#'
+#' @returns Called for its side effect of writing a file; returns
+#'   \code{results} invisibly.
+#' @export
+#'
+#' @examples
+#' \dontrun{
+#' daily_cross_validate_write(results, "2024-11-15", "./output/cross_validation/")
+#' }
+daily_cross_validate_write <- function(results, dt, output_path) {
+  
+  outfile <- fs::path_join(c(output_path,
+                             paste0("rapidfire_l-o-o_",
+                                    strftime(dt, format = "%Y-%m-%d"), ".csv")))
+  readr::write_csv(results, outfile)
+}

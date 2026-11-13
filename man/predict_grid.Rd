@@ -4,16 +4,19 @@
 \alias{predict_grid}
 \title{Predict gridded PM2.5 concentrations for a single day}
 \usage{
-predict_grid(dt, grid_file, model_file, paths)
+predict_grid(dt, grid, mon, models, hrrr, maiac, pa)
 }
 \arguments{
 \item{dt}{A \code{Date} or date-coercible character string specifying the day to
 predict.}
 
-\item{grid_file}{Path to a GeoTIFF file defining the prediction grid (CRS, extent,
-and resolution). Loaded with \code{terra::rast}.}
+\item{grid}{A \code{SpatRaster} defining the prediction grid (CRS, extent, and
+resolution).}
 
-\item{model_file}{Path to an RDS file containing a named list with elements:
+\item{mon}{A \code{SpatVector} of combined regulatory and temporary monitor
+observations for the day, with a \code{PM25_log} column.}
+
+\item{models}{A named list with elements:
 \describe{
   \item{model}{A fitted random forest model (e.g., from \code{\link{develop_model}}).}
   \item{vgm_mon}{A \code{variogramModel} for regulatory monitor kriging.}
@@ -21,18 +24,17 @@ and resolution). Loaded with \code{terra::rast}.}
     (\code{nmax = 100}).}
 }}
 
-\item{paths}{A named list of directory paths with the following elements:
-\describe{
-  \item{monitors}{Directory containing combined monitor RDS files
-    (\code{monitors_combined_YYYY-MM-DD.RDS}).}
-  \item{hrrr}{Directory containing preprocessed HRRR GeoTIFF files.}
-  \item{maiac}{Directory containing preprocessed MAIAC GeoTIFF files.}
-  \item{purpleair}{Directory containing preprocessed PurpleAir RDS files.}
-  \item{output}{Directory where the output GeoTIFF will be saved.}
-}}
+\item{hrrr}{A \code{SpatRaster} of HRRR meteorological and smoke layers for the
+day (e.g., from \code{\link{hrrr_stack}}).}
+
+\item{maiac}{A \code{SpatRaster} of processed MAIAC AOD for the day. It is
+regridded to \code{grid} internally.}
+
+\item{pa}{A \code{SpatVector} of processed PurpleAir sensors for the day (e.g.,
+from \code{\link{pa_preprocess}}).}
 }
 \value{
-A multi-layer \code{SpatRaster} on the \code{grid_file} grid with layers:
+A multi-layer \code{SpatRaster} on the \code{grid} grid with layers:
   \describe{
     \item{PM25_RF}{Random forest PM2.5 prediction (µg/m³, linear scale).}
     \item{PM25_log_RF}{Random forest PM2.5 prediction (log scale).}
@@ -42,8 +44,7 @@ A multi-layer \code{SpatRaster} on the \code{grid_file} grid with layers:
       predictors.}
     \item{MAIAC_AOD}{MAIAC aerosol optical depth.}
   }
-  The raster is also written to \code{paths[["output"]]} as
-  \code{rapidfire_YYYY-MM-DD.tif}.
+  Use \code{\link{predict_grid_write}} to save the result to disk.
 }
 \description{
 Assembles all predictor layers for a given date — kriged regulatory and temprorary monitor
@@ -56,19 +57,16 @@ in the output stack alongside all input predictor layers.
 \dontrun{
 result <- predict_grid(
   dt = "2024-11-15",
-  grid_file = "./grid/prediction_grid.tif",
-  model_file = "./models/rapidfire_model.RDS",
-  paths = list(
-    monitors  = "./processed_data/monitors/",
-    hrrr      = "./processed_data/HRRR/",
-    maiac     = "./processed_data/MAIAC/",
-    purpleair = "./processed_data/purpleair/",
-    output    = "./output/"
-  )
+  grid = terra::rast("./grid/prediction_grid.tif"),
+  mon = mon,
+  models = readRDS("./models/rapidfire_model.RDS"),
+  hrrr = hrrr_stack("2024-11-15", "./processed_data/HRRR/"),
+  maiac = terra::rast("./processed_data/MAIAC/MAIAC_processed_2024-11-15.tif"),
+  pa = pa
 )
 }
 }
 \seealso{
-\code{\link{hrrr_stack}}, \code{\link{monitors_krige_grid}},
-  \code{\link{maiac_regrid}}
+\code{\link{predict_grid_write}}, \code{\link{hrrr_stack}},
+  \code{\link{monitors_krige_grid}}, \code{\link{maiac_regrid}}
 }

@@ -4,18 +4,11 @@
 \alias{airnow_acquire}
 \title{Acquire AirNow daily PM2.5 monitor data}
 \usage{
-airnow_acquire(
-  date,
-  output_path = "./processed_data/airnow/",
-  crs = "EPSG:3395"
-)
+airnow_acquire(date, crs = "EPSG:3395")
 }
 \arguments{
 \item{date}{A \code{Date} or date-coercible character string specifying the day
 to acquire.}
-
-\item{output_path}{Directory path where the processed RDS file will be saved.
-Default is \code{"./processed_data/airnow/"}.}
 
 \item{crs}{Coordinate reference system string passed to \code{terra::project}.
 Default is \code{"EPSG:3395"}.}
@@ -23,13 +16,12 @@ Default is \code{"EPSG:3395"}.}
 \value{
 A \code{SpatVector} with one point per monitor and columns
   \code{monitorID} (AQS site identifier), \code{Day} (date), and
-  \code{PM25_log} (log-transformed 24-hour average PM2.5). Also written to
-  \code{output_path} as \code{airnow_pm25_24hr_YYYY-MM-DD.RDS}.
+  \code{PM25_log} (log-transformed 24-hour average PM2.5).
 }
 \description{
 Downloads the AirNow daily data file for a given date from the AirNow S3
 archive, filters to 24-hour average PM2.5 observations, log-transforms the
-values, and returns a projected \code{SpatVector} saved to disk. This source
+values, and returns a projected \code{SpatVector}. This source
 covers regulatory monitors but does not include temporary monitors from AIRSIS
 or WRCC (see \code{\link[rapidfire]{temp_monitors_acquire}} for those).
 }
