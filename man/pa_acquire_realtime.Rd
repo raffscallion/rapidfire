@@ -11,7 +11,7 @@ pa_acquire_realtime(
   selat = 32.53,
   max_age = 3600,
   key = NULL,
-  dbdir = NULL
+  dbdir = "./purpleair.duckdb"
 )
 }
 \arguments{

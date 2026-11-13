@@ -4,14 +4,7 @@
 \alias{hrrr_acquire}
 \title{Download and preprocess HRRR-smoke data for a single day}
 \usage{
-hrrr_acquire(
-  date,
-  outpath,
-  extent_grid,
-  tz = "America/Los_Angeles",
-  crs = "EPSG:3395",
-  delete_files = FALSE
-)
+hrrr_acquire(date, outpath, tz = "America/Los_Angeles")
 }
 \arguments{
 \item{date}{A \code{Date} or date-coercible character string specifying the local
@@ -20,11 +13,11 @@ day to acquire.}
 \item{outpath}{Directory path for saving both the raw GRIB2 downloads and the
 processed GeoTIFF outputs.}
 
-\item{extent_grid}{A \code{SpatRaster} defining the target CRS, spatial extent,
-and resolution for all output files (e.g., the model prediction grid).}
-
 \item{tz}{Local timezone string used to identify the 24 UTC hours that correspond
 to the requested local calendar day. Default is \code{"America/Los_Angeles"}.}
+
+\item{extent_grid}{A \code{SpatRaster} defining the target CRS, spatial extent,
+and resolution for all output files (e.g., the model prediction grid).}
 
 \item{crs}{Output coordinate reference system string passed to
 \code{terra::project}. Default is \code{"EPSG:3395"}.}

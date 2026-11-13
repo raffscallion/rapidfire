@@ -53,16 +53,24 @@ airnow_acquire <- function(date, crs = "EPSG:3395") {
   
 }
 
-#' Title
+#' Save acquired AirNow data to an RDS file
 #'
-#' @param spat 
-#' @param fname 
-#' @param output_path 
+#' Saves the output of \code{\link{airnow_acquire}} to an RDS file.
 #'
-#' @returns
+#' @param spat A \code{SpatVector} returned by \code{\link{airnow_acquire}}.
+#' @param fname File name for the RDS file (e.g., \code{"airnow_2024-11-15.RDS"}).
+#' @param output_path Directory where the file will be saved.
+#'   Default is \code{"./processed_data/airnow/"}.
+#'
+#' @returns Called for its side effect of writing a file; returns \code{NULL}
+#'   invisibly.
 #' @export
 #'
 #' @examples
+#' \dontrun{
+#' spat <- airnow_acquire("2024-11-15")
+#' airnow_acquire_write(spat, "airnow_2024-11-15.RDS")
+#' }
 airnow_acquire_write <- function(spat, fname, output_path = "./processed_data/airnow/") {
   
   fname <- fs::path_join(c(output_path, fname))

@@ -1,43 +1,23 @@
-#' Preprocess realtime PurpleAir data into 24-hour averages ready for interpolation
+#' Read raw realtime PurpleAir data for a day from DuckDB
 #'
-#' Reads realtime PurpleAir data from a DuckDB database, computes log-mean 24-hour
-#' PM2.5 averages for a specified date, filters by location type and data completeness,
-#' and returns a projected SpatVector saved to disk.
+#' Pulls records with confidence above 60 from the \code{pa_realtime} table for the
+#' day before through the day after \code{dt} (a buffer so the data can later be
+#' converted to local time). Pass the result to \code{\link{pa_preprocess}}.
 #'
-#' @param dt A \code{Date} or date-coercible string specifying the local day to process.
-#' @param duckdb_path Path to the DuckDB database file containing the \code{pa_realtime}
-#'   table.
-#' @param sensors A data frame of sensor metadata containing at minimum
-#'   \code{sensor_index}, \code{latitude}, \code{longitude}, and \code{location_type}
-#'   columns (e.g., from \code{\link{pa_find_sensors}}).
-#' @param location_types Numeric vector of PurpleAir location type codes to retain.
-#'   0 = outside, 1 = inside. Default is \code{0}.
-#' @param timezone Local timezone string used to assign the correct calendar day.
-#'   Default is \code{"America/Los_Angeles"}.
-#' @param clean_outliers Logical. If \code{TRUE}, apply spatial outlier removal via
-#'   \code{pa_clean_spatial_outliers}. Default is \code{TRUE}.
-#' @param crs Coordinate reference system string passed to \code{terra::project}.
-#'   Default is \code{"EPSG:3395"}.
-#' @param output_path Directory path where the processed RDS file will be saved.
-#'   Default is \code{"./processed_data/purpleair/"}.
+#' @param dt A \code{Date} or date-coercible string specifying the local day of
+#'   interest.
+#' @param duckdb_path Path to the DuckDB database file containing the
+#'   \code{pa_realtime} table.
 #'
-#' @returns A \code{SpatVector} of sensors with log-mean 24-hour PM2.5 values
-#'   (\code{PM25_log}) projected to \code{crs}. The object is also saved to
-#'   \code{output_path} as an RDS file named
-#'   \code{purpleair_processed_YYYY-MM-DD.RDS}.
+#' @returns A data frame of raw realtime PurpleAir readings.
 #' @export
 #'
 #' @examples
 #' \dontrun{
-#' sensors <- pa_find_sensors(-124.41, 42.01, -114.13, 32.53, key = Sys.getenv("PURPLEAIR_READ_KEY"))
-#' pa_preprocess("2024-11-15", duckdb_path = "purpleair.duckdb", sensors = sensors)
+#' df <- pa_preprocess_read("2024-11-15", duckdb_path = "purpleair.duckdb")
 #' }
-pa_preprocess <- function(dt, duckdb_path, sensors, location_types = 0,
-                          timezone = "America/Los_Angeles",
-                          clean_outliers = TRUE,
-                          crs = "EPSG:3395",
-                          output_path = "./processed_data/purpleair/") {
-
+pa_preprocess_read <- function(dt, duckdb_path) {
+  
   con <- DBI::dbConnect(duckdb::duckdb(), dbdir = duckdb_path)
   
   # Pull days around the date from the database before converting to correct tz
@@ -50,6 +30,49 @@ pa_preprocess <- function(dt, duckdb_path, sensors, location_types = 0,
     collect()
   
   DBI::dbDisconnect(con)
+  return(df)
+  
+}
+
+
+#' Preprocess realtime PurpleAir data into 24-hour averages ready for interpolation
+#'
+#' Computes log-mean 24-hour PM2.5 averages for a specified date from raw realtime
+#' PurpleAir data (see \code{\link{pa_preprocess_read}}), filters by location type
+#' and data completeness, and returns a projected SpatVector.
+#'
+#' @param df A data frame of raw realtime PurpleAir readings, e.g., from
+#'   \code{\link{pa_preprocess_read}}.
+#' @param dt A \code{Date} or date-coercible string specifying the local day to process.
+#' @param sensors A data frame of sensor metadata containing at minimum
+#'   \code{sensor_index}, \code{latitude}, \code{longitude}, and \code{location_type}
+#'   columns (e.g., from \code{\link{pa_find_sensors}}).
+#' @param location_types Numeric vector of PurpleAir location type codes to retain.
+#'   0 = outside, 1 = inside. Default is \code{0}.
+#' @param timezone Local timezone string used to assign the correct calendar day.
+#'   Default is \code{"America/Los_Angeles"}.
+#' @param clean_outliers Logical. If \code{TRUE}, apply spatial outlier removal via
+#'   \code{pa_clean_spatial_outliers}. Default is \code{TRUE}.
+#' @param crs Coordinate reference system string passed to \code{terra::project}.
+#'   Default is \code{"EPSG:3395"}.
+#'
+#' @returns A \code{SpatVector} of sensors with log-mean 24-hour PM2.5 values
+#'   (\code{PM25_log}) projected to \code{crs}. Use
+#'   \code{\link{pa_preprocess_write}} to save it to disk.
+#' @export
+#'
+#' @seealso \code{\link{pa_preprocess_read}}, \code{\link{pa_preprocess_write}}
+#'
+#' @examples
+#' \dontrun{
+#' sensors <- pa_find_sensors(-124.41, 42.01, -114.13, 32.53, key = Sys.getenv("PURPLEAIR_READ_KEY"))
+#' df <- pa_preprocess_read("2024-11-15", duckdb_path = "purpleair.duckdb")
+#' pa <- pa_preprocess(df, "2024-11-15", sensors = sensors)
+#' }
+pa_preprocess <- function(df, dt, sensors, location_types = 0,
+                          timezone = "America/Los_Angeles",
+                          clean_outliers = TRUE,
+                          crs = "EPSG:3395") {
 
   # Convert to local time and filter to requested date
   df <- df |>
@@ -92,12 +115,37 @@ pa_preprocess <- function(dt, duckdb_path, sensors, location_types = 0,
     pa_sp <- pa_clean_spatial_outliers(pa_sp)  
   }
   
+  return(pa_sp)
+  
+}
+
+#' Save processed PurpleAir data to an RDS file
+#'
+#' Saves the output of \code{\link{pa_preprocess}} as
+#' \code{purpleair_processed_YYYY-MM-DD.RDS}.
+#'
+#' @param pa_sp A \code{SpatVector} returned by \code{\link{pa_preprocess}}.
+#' @param dt A \code{Date} or date-coercible string for the processed day, used in
+#'   the file name.
+#' @param output_path Directory where the RDS file will be saved.
+#'   Default is \code{"./processed_data/purpleair/"}.
+#'
+#' @returns The path of the saved file.
+#' @export
+#'
+#' @examples
+#' \dontrun{
+#' pa_preprocess_write(pa, "2024-11-15")
+#' }
+pa_preprocess_write <- function(pa_sp, dt, output_path = "./processed_data/purpleair/") {
+  
   fname <- paste0("purpleair_processed_", strftime(dt, "%Y-%m-%d"), ".RDS")
   fname <- fs::path_join(c(output_path, fname))
   terra::saveRDS(pa_sp, fname)
-  pa_sp
+  return(fname)
   
 }
+
 
 #' Acquire realtime PurpleAir sensor readings into a DuckDB database
 #'
