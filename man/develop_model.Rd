@@ -4,7 +4,17 @@
 \alias{develop_model}
 \title{Develop a random forest model for PM2.5 estimation}
 \usage{
-develop_model(dt1, dt2, paths, test_extent = NULL, pa_nmax = 100, seed = 1977)
+develop_model(
+  dt1,
+  dt2,
+  mon,
+  pa,
+  hrrr_path,
+  maiac_path,
+  test_extent = NULL,
+  pa_nmax = 100,
+  seed = 1977
+)
 }
 \arguments{
 \item{dt1}{A \code{Date} or date-coercible character string giving the first day of the
@@ -13,14 +23,19 @@ training period (inclusive).}
 \item{dt2}{A \code{Date} or date-coercible character string giving the last day of the
 training period (inclusive).}
 
-\item{paths}{A named list of directory paths with the following elements:
-\describe{
-  \item{monitors}{Directory containing combined monitor RDS files
-    (\code{monitors_combined_YYYY-MM-DD.RDS}).}
-  \item{purpleair}{Directory containing preprocessed PurpleAir RDS files.}
-  \item{hrrr}{Directory containing preprocessed HRRR GeoTIFF files.}
-  \item{maiac}{Directory containing preprocessed MAIAC GeoTIFF files.}
-}}
+\item{mon}{A \code{SpatVector} of monitor observations for all training days, with
+\code{monitorID}, \code{Day}, and \code{PM25_log} columns (e.g., from
+\code{\link{develop_model_monitors}}).}
+
+\item{pa}{A \code{SpatVector} of processed PurpleAir sensors for all training days,
+with \code{Day} and \code{PM25_log} columns (e.g., from
+\code{\link{develop_model_pa}}).}
+
+\item{hrrr_path}{Directory containing preprocessed HRRR GeoTIFF files, as read by
+\code{\link{hrrr_stack}}.}
+
+\item{maiac_path}{Directory containing preprocessed MAIAC GeoTIFF files
+(\code{MAIAC_processed_YYYY-MM-DD.tif}).}
 
 \item{test_extent}{An optional \code{SpatVector} or \code{SpatExtent} used to restrict
 monitors to a specific region before model training. If \code{NULL}, all monitors are
@@ -45,25 +60,24 @@ A named list with three elements:
   }
 }
 \description{
-Trains a random forest model for estimating surface-level PM2.5 over a date range using
-preprocessed inputs from regulatory and temporary monitors, PurpleAir sensors, HRRR
-meteorology, and MAIAC AOD. Monitors are split into training and test sets; kriged
-estimates from the training monitors and PurpleAir sensors are computed at the test
-locations along with co-located HRRR and MAIAC values. A random forest is then trained
-using 10-fold cross-validation with \code{mtry} tuning. The function returns the fitted
-model and variogram models needed for prediction and validation.
+Trains a random forest model for estimating surface-level PM2.5 using monitor and
+PurpleAir data already loaded for the training period (see
+\code{\link{develop_model_monitors}} and \code{\link{develop_model_pa}}), plus HRRR
+meteorology and MAIAC AOD read from disk. Monitors are split into training and test
+sets; kriged estimates from the training monitors and PurpleAir sensors are computed at
+the test locations along with co-located HRRR and MAIAC values. A random forest is then
+trained using 10-fold cross-validation with \code{mtry} tuning. The function returns
+the fitted model and variogram models needed for prediction and validation.
 }
 \examples{
 \dontrun{
 model_list <- develop_model(
   dt1 = "2024-10-01",
   dt2 = "2024-11-30",
-  paths = list(
-    monitors  = "./processed_data/monitors/",
-    purpleair = "./processed_data/purpleair/",
-    hrrr      = "./processed_data/HRRR/",
-    maiac     = "./processed_data/MAIAC/"
-  )
+  mon = develop_model_monitors("2024-10-01", "2024-11-30", "./processed_data/monitors/"),
+  pa = develop_model_pa("2024-10-01", "2024-11-30", "./processed_data/purpleair/"),
+  hrrr_path = "./processed_data/HRRR/",
+  maiac_path = "./processed_data/MAIAC/"
 )
 saveRDS(model_list, "./models/rapidfire_model.RDS")
 }

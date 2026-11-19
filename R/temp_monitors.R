@@ -64,6 +64,28 @@ temp_monitors_acquire <- function(date, states = NULL, timezone = "America/Los_A
 }
 
 
+#' Save acquired temporary monitor data to an RDS file
+#'
+#' Saves the output of \code{\link{temp_monitors_acquire}} to an RDS file.
+#'
+#' @param spat A \code{SpatVector} returned by \code{\link{temp_monitors_acquire}}
+#'   (may be \code{NULL} if no monitors had sufficient data).
+#' @param fname File name for the RDS file (e.g.,
+#'   \code{"temp_monitors_pm25_24hr_2024-11-15.RDS"}).
+#' @param output_path Directory where the file will be saved.
+#'   Default is \code{"./processed_data/temp_monitors/"}.
+#'
+#' @returns Called for its side effect of writing a file; returns \code{NULL}
+#'   invisibly.
+#' @export
+#'
+#' @seealso \code{\link{temp_monitors_acquire}}, \code{\link{monitors_combine}}
+#'
+#' @examples
+#' \dontrun{
+#' spat <- temp_monitors_acquire("2024-11-15")
+#' temp_monitors_acquire_write(spat, "temp_monitors_pm25_24hr_2024-11-15.RDS")
+#' }
 temp_monitors_acquire_write <- function(spat, fname, 
                                    output_path = "./processed_data/temp_monitors/") {
   
