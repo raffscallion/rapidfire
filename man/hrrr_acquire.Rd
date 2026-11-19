@@ -2,7 +2,7 @@
 % Please edit documentation in R/hrrr-smoke.R
 \name{hrrr_acquire}
 \alias{hrrr_acquire}
-\title{Download and preprocess HRRR-smoke data for a single day}
+\title{Download HRRR-smoke GRIB2 files for a single local day}
 \usage{
 hrrr_acquire(date, outpath, tz = "America/Los_Angeles")
 }
@@ -10,35 +10,26 @@ hrrr_acquire(date, outpath, tz = "America/Los_Angeles")
 \item{date}{A \code{Date} or date-coercible character string specifying the local
 day to acquire.}
 
-\item{outpath}{Directory path for saving both the raw GRIB2 downloads and the
-processed GeoTIFF outputs.}
+\item{outpath}{Directory path where the raw GRIB2 files are saved.}
 
 \item{tz}{Local timezone string used to identify the 24 UTC hours that correspond
 to the requested local calendar day. Default is \code{"America/Los_Angeles"}.}
-
-\item{extent_grid}{A \code{SpatRaster} defining the target CRS, spatial extent,
-and resolution for all output files (e.g., the model prediction grid).}
-
-\item{crs}{Output coordinate reference system string passed to
-\code{terra::project}. Default is \code{"EPSG:3395"}.}
-
-\item{delete_files}{Logical. If \code{TRUE}, the raw GRIB2 files and their
-\code{.idx} index files are deleted after processing. Default is \code{FALSE}.}
 }
 \value{
-Called for its side effect of writing one GeoTIFF per variable to
-  \code{outpath}. Invisibly returns \code{NULL}.
+A character vector of the 24 local GRIB2 file paths, to be passed to
+  \code{\link{hrrr_preprocess}}.
 }
 \description{
 Downloads the 24 HRRR forecast hour-1 (F001) GRIB2 files needed to represent a
-full local calendar day, subsets and regrids them to \code{extent_grid}, then
-computes 24-hour means for atmospheric variables (HPBL, RH, UGRD, VGRD, TMP,
-MASSDEN) and the cumulative precipitation total (APCP). Each variable is written
-to \code{outpath} as a separate GeoTIFF named
-\code{VARNAME_YYYYMMDD_hrrrsmoke.tif}.
+full local calendar day. Files already present in \code{outpath} are not
+downloaded again. Use \code{\link{hrrr_preprocess}} to turn the downloaded files
+into daily GeoTIFFs.
 }
 \examples{
 \dontrun{
-hrrr_acquire("2024-11-15", outpath = "./raw_data/HRRR/", extent_grid = grid)
+files <- hrrr_acquire("2024-11-15", outpath = "./raw_data/HRRR/")
 }
+}
+\seealso{
+\code{\link{hrrr_preprocess}}, \code{\link{hrrr_stack}}
 }

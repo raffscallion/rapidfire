@@ -15,8 +15,8 @@ operational near-real-time (previous day) estimates or for retrospective analysi
 |---|---|---|
 | [AirNow](https://www.airnow.gov) file archive | Hourly PM2.5 (air agency monitors) | `airnow_acquire()` |
 | [AIRSIS / WRCC](https://github.com/MazamaScience/AirMonitor) (via AirMonitor) | Hourly PM2.5 (temporary monitors) | `temp_monitors_acquire()` |
-| [PurpleAir](https://www.purpleair.com) API | Estimated PM2.5 (low-cost sensors) | `pa_acquire_realtime()`, `pa_preprocess()` |
-| [HRRR-Smoke](https://rapidrefresh.noaa.gov/hrrr/) (NOAA S3) | Boundary layer height, temperature, winds, humidity, smoke mass density, precipitation | `hrrr_acquire()` |
+| [PurpleAir](https://www.purpleair.com) API | Estimated PM2.5 (low-cost sensors) | `pa_acquire_realtime()`, `pa_preprocess_read()`, `pa_preprocess()` |
+| [HRRR-Smoke](https://rapidrefresh.noaa.gov/hrrr/) (NOAA S3) | Boundary layer height, temperature, winds, humidity, smoke mass density, precipitation | `hrrr_acquire()`, `hrrr_preprocess()` |
 | [MAIAC AOD](https://lpdaac.usgs.gov/products/mcd19a2v061/) MCD19A2 (NASA EarthData) | 470 nm aerosol optical depth | `maiac_acquire()`, `maiac_preprocess()` |
 
 ---
@@ -64,7 +64,8 @@ paths <- list(
 ### 2. Acquire daily inputs
 
 Run these steps for each date you want to process. For operational use, schedule
-them daily (e.g., with `cronR` or `taskscheduleR`).
+them daily (e.g., with `cronR` or `taskscheduleR`). Acquisition functions return
+their results; the matching `*_write()` functions save them.
 
 ```r
 library(rapidfire)
@@ -75,10 +76,15 @@ date <- "2024-11-15"
 grid <- terra::rast("./grid/prediction_grid.tif")
 
 # Regulatory monitors (AirNow)
-airnow_acquire(date, output_path = paths[["airnow"]])
+airnow <- airnow_acquire(date)
+airnow_acquire_write(airnow, paste0("airnow_pm25_24hr_", date, ".RDS"),
+                     output_path = paths[["airnow"]])
 
 # Temporary monitors (AIRSIS / WRCC)
-temp_monitors_acquire(date, output_path = paths[["temp_monitors"]])
+temp_mon <- temp_monitors_acquire(date)
+temp_monitors_acquire_write(temp_mon,
+                            paste0("temp_monitors_pm25_24hr_", date, ".RDS"),
+                            output_path = paths[["temp_monitors"]])
 
 # Combine monitor sources and optionally clip to an extent
 # Here I loaded a pregenerated extent of 100 km around CA saved as a SpatVector
@@ -89,9 +95,11 @@ monitors_combine(date,
   output_path              = paths[["monitors"]],
   extent                   = extent)
 
-# HRRR-Smoke meteorology (raw GRIB2 files deleted after processing)
-hrrr_acquire(date, outpath = paths[["hrrr"]], extent_grid = grid,
-             delete_files = TRUE)
+# HRRR-Smoke meteorology: download GRIB2 files, then compute daily variables
+# (raw GRIB2 files deleted after processing)
+hrrr_files <- hrrr_acquire(date, outpath = paths[["hrrr"]])
+hrrr_preprocess(date, hrrr_files, outpath = paths[["hrrr"]],
+                extent_grid = grid, delete_grib = TRUE)
 
 # MAIAC AOD satellite data
 maiac_files <- maiac_acquire(date,
@@ -104,10 +112,10 @@ fs::file_delete(maiac_files)  # remove intermediate HDF files
 
 # PurpleAir low-cost sensors
 sensors <- readRDS("./data/purpleair/purpleair_sensors.RDS")
-pa_preprocess(date,
-  duckdb_path = "./data/purpleair/purpleair.duckdb",
-  sensors     = sensors,
-  output_path = paths[["purpleair"]])
+pa_raw <- pa_preprocess_read(date,
+  duckdb_path = "./data/purpleair/purpleair.duckdb")
+pa <- pa_preprocess(pa_raw, date, sensors = sensors)
+pa_preprocess_write(pa, date, output_path = paths[["purpleair"]])
 ```
 
 For PurpleAir, a local DuckDB database must first be populated using
@@ -135,13 +143,21 @@ one file.
 
 ### 4. Generate daily predictions
 
+`predict_grid()` takes the loaded inputs rather than file paths, so read the
+day's data first and save the result with `predict_grid_write()`:
+
 ```r
-result <- predict_grid(
-  dt         = date,
-  grid_file  = "./grid/prediction_grid.tif",
-  model_file = "./models/rapidfire_model.RDS",
-  paths      = paths
-)
+models <- readRDS("./models/rapidfire_model.RDS")
+mon    <- terra::readRDS(fs::path(paths[["monitors"]],
+                                  paste0("monitors_combined_", date, ".RDS")))
+hrrr   <- hrrr_stack(date, paths[["hrrr"]])
+maiac  <- terra::rast(fs::path(paths[["maiac"]],
+                               paste0("MAIAC_processed_", date, ".tif")))
+pa     <- terra::readRDS(fs::path(paths[["purpleair"]],
+                                  paste0("purpleair_processed_", date, ".RDS")))
+
+result <- predict_grid(date, grid, mon, models, hrrr, maiac, pa)
+predict_grid_write(result, date, output_path = paths[["output"]])
 ```
 
 Output is a multi-layer GeoTIFF (`rapidfire_YYYY-MM-DD.tif`) containing the
@@ -151,17 +167,16 @@ input predictor layers.
 ### 5. Validate predictions
 
 Leave-one-out cross-validation can be run alongside daily predictions to track
-ongoing model performance:
+ongoing model performance, using the same inputs:
 
 ```r
-cv_results <- daily_cross_validate(
-  dt         = date,
-  model_file = "./models/rapidfire_model.RDS",
-  paths      = paths
-)
+cv_results <- daily_cross_validate(date, mon, models, hrrr, maiac, pa)
+daily_cross_validate_write(cv_results, date,
+                           output_path = paths[["cross_validation"]])
 ```
 
-Results are saved as `rapidfire_l-o-o_YYYY-MM-DD.csv`.
+Results are saved as `rapidfire_l-o-o_YYYY-MM-DD.csv`. `daily_map_diagnostic()`
+can then plot the prediction surface with monitor differences.
 
 ---
 
@@ -172,10 +187,12 @@ Results are saved as `rapidfire_l-o-o_YYYY-MM-DD.csv`.
 | Function | Description |
 |---|---|
 | `airnow_acquire()` | Download AirNow 24-hr PM2.5 data |
+| `airnow_acquire_write()` | Save acquired AirNow data to an RDS file |
 | `temp_monitors_acquire()` | Download AIRSIS/WRCC temporary monitor data |
+| `temp_monitors_acquire_write()` | Save acquired temporary monitor data to an RDS file |
 | `pa_find_sensors()` | Get PurpleAir sensor metadata for a bounding box |
 | `pa_acquire_realtime()` | Fetch current PurpleAir readings into a DuckDB database |
-| `hrrr_acquire()` | Download and preprocess HRRR-Smoke data |
+| `hrrr_acquire()` | Download HRRR-Smoke GRIB2 files for a local day |
 | `maiac_acquire()` | Download MAIAC AOD granules from NASA EarthData |
 | `maiac_preprocess()` | Merge MAIAC tiles and fill spatial gaps |
 
@@ -184,7 +201,10 @@ Results are saved as `rapidfire_l-o-o_YYYY-MM-DD.csv`.
 | Function | Description |
 |---|---|
 | `monitors_combine()` | Combine AirNow and temporary monitor data |
-| `pa_preprocess()` | Compute 24-hr PurpleAir averages from a DuckDB database |
+| `hrrr_preprocess()` | Compute daily HRRR-Smoke variables and write GeoTIFFs |
+| `pa_preprocess_read()` | Read raw realtime PurpleAir data for a day from DuckDB |
+| `pa_preprocess()` | Compute 24-hr PurpleAir averages from the raw data |
+| `pa_preprocess_write()` | Save processed PurpleAir data to an RDS file |
 
 ### Modeling
 
@@ -192,7 +212,10 @@ Results are saved as `rapidfire_l-o-o_YYYY-MM-DD.csv`.
 |---|---|
 | `develop_model()` | Train a random forest model over a date range |
 | `predict_grid()` | Generate a gridded PM2.5 surface for a single day |
+| `predict_grid_write()` | Save a predicted surface as a GeoTIFF |
 | `daily_cross_validate()` | Leave-one-out cross-validation at monitor locations |
+| `daily_cross_validate_write()` | Save cross-validation results as a CSV |
+| `daily_map_diagnostic()` | Map predictions with differences from monitors |
 
 ### Utilities
 
